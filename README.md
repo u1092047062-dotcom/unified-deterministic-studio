@@ -12,7 +12,7 @@ Konvergierte Engineering-Plattform, die die Architekturen, Qualitaets-Invariante
 unified-deterministic-studio/
 ├── packages/platform_core/         # Gemeinsamer Stdlib-Kern (Provenienz, Telemetrie, JobStore, ResourceGuard, Security)
 ├── apps/
-│   ├── platform_gateway/           # Lokales Control-Hub & Cockpit UI (127.0.0.1:8080, mountet /eda & /art)
+│   ├── platform_gateway/           # Lokales Control-Hub, Cockpit UI & Interaktiver Simulator (127.0.0.1:8080/simulator)
 │   ├── eda-multiagent-core/        # Deterministische PCB-Pipeline + Synthesizer + RS-274X Gerber/Excellon + Rust core_fast + Tauri
 │   └── art-restoration-ai/         # Quality-First Restaurierungs-Engine + Checkpoint-Verifier + Projekt-Provenienz + Telemetrie
 ├── services/

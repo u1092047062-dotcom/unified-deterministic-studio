@@ -40,13 +40,15 @@ from server.server import app as eda_app
 from app.main import app as art_app
 from app.telemetry import resolve_art_log_dir
 from restoration.checkpoints import inspect_checkpoints_dir
+from simulator import sim_router
 
 gateway = FastAPI(
     title="Unified Deterministic Studio – Platform Gateway",
     version="1.0.0",
-    description="Lokales Control-Hub fuer EDA Multi-Agent Core und ART Restoration AI (127.0.0.1).",
+    description="Lokales Control-Hub fuer EDA Multi-Agent Core, ART Restoration AI und Interaktiven Simulator (127.0.0.1).",
 )
 
+gateway.include_router(sim_router)
 gateway.mount("/eda", eda_app)
 gateway.mount("/art", art_app)
 
@@ -116,6 +118,11 @@ def gateway_overview(ram_gb: float = 8.0, vram_gb: float = 4.0) -> JSONResponse:
 @gateway.get("/", include_in_schema=False)
 def cockpit_index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@gateway.get("/simulator", include_in_schema=False)
+def simulator_ui() -> FileResponse:
+    return FileResponse(STATIC_DIR / "simulator.html")
 
 
 if __name__ == "__main__":
