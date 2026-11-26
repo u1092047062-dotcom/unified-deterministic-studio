@@ -212,10 +212,11 @@ def verify_and_render_gerbers(gerber_files: Mapping[str, str]) -> Dict[str, obje
 
     colors = {
         "Edge_Cuts.gm1": "#22c55e",
+        "Panel_Edge_Cuts.gm1": "#22c55e",
         "B_Cu.gbl": "#38bdf8",
         "F_Cu.gtl": "#f97316",
     }
-    for lname in ("Edge_Cuts.gm1", "B_Cu.gbl", "F_Cu.gtl"):
+    for lname in ("Edge_Cuts.gm1", "Panel_Edge_Cuts.gm1", "B_Cu.gbl", "F_Cu.gtl"):
         if lname not in parsed_layers:
             continue
         col = colors[lname]
@@ -229,8 +230,8 @@ def verify_and_render_gerbers(gerber_files: Mapping[str, str]) -> Dict[str, obje
                 f'<circle cx="{x:.2f}" cy="{max_y - y:.2f}" r="{max(d/2.0, 0.3):.2f}" fill="#fbbf24"/>'
             )
 
-    if "board.drl" in parsed_layers:
-        for x, y, d in parsed_layers["board.drl"]["_hits"]:
+    for drl_name in sorted(k for k in parsed_layers if k.lower().endswith(".drl")):
+        for x, y, d in parsed_layers[drl_name]["_hits"]:
             svg.append(
                 f'<circle cx="{x:.2f}" cy="{max_y - y:.2f}" r="{max(d/2.0, 0.2):.2f}" fill="#ffffff" stroke="#0f172a" stroke-width="0.12"/>'
             )

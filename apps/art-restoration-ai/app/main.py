@@ -13,6 +13,12 @@ _PLATFORM_CORE = Path(__file__).resolve().parents[3] / "packages" / "platform_co
 if _PLATFORM_CORE.is_dir() and str(_PLATFORM_CORE) not in sys.path:
     sys.path.insert(0, str(_PLATFORM_CORE))
 
+from platform_core.c2pa_credentials import (
+    build_c2pa_manifest,
+    detect_c2pa_backend,
+    embed_png_content_credentials,
+    verify_png_content_credentials,
+)
 from platform_core.provenance import build_provenance_manifest
 
 from app.config import DATA_DIR, WORK_DIR, MAX_UPLOAD_MB, ALLOWED_EXTENSIONS
@@ -343,6 +349,46 @@ def checkpoints_status():
 def io_backend_status():
     """Liefert den Status des Streaming-Kachel-I/O-Backends (pyvips vs. pillow-bounded)."""
     return detect_streaming_backend()
+
+
+@app.get("/c2pa/status")
+def c2pa_status():
+    """Liefert den Status des C2PA Content-Credentials-Backends."""
+    return detect_c2pa_backend()
+
+
+@app.post("/projects/{project_id}/c2pa/embed")
+def embed_project_c2pa(project_id: str, ai_disclosed: bool = False):
+    """Bettet C2PA Content Credentials verlustfrei in die validierte PNG-Ausgabe des Projekts ein."""
+    project = project_dir(project_id)
+    record = source_record(project)
+    output_png = project / "outputs" / "pipeline-validation.png"
+    if not output_png.is_file():
+        raise HTTPException(404, "Noch keine PNG-Ausgabe vorhanden; zuerst Restaurierung ausfuehren")
+    manifest = build_c2pa_manifest(
+        title=f"project-{project_id}-output.png",
+        source_sha256=record["sha256"],
+        actions=[
+            {"action": "c2pa.opened", "softwareAgent": "ART Restoration AI"},
+            {"action": "c2pa.edited", "softwareAgent": "ART Restoration AI"},
+        ],
+        ai_disclosed=ai_disclosed,
+        simulated=False,
+        extra_metadata={"project_id": project_id},
+    )
+    signed_bytes = embed_png_content_credentials(output_png.read_bytes(), manifest)
+    output_png.write_bytes(signed_bytes)
+    return verify_png_content_credentials(signed_bytes)
+
+
+@app.get("/projects/{project_id}/c2pa/verify")
+def verify_project_c2pa(project_id: str):
+    """Verifiziert die eingebetteten C2PA Content Credentials der Projekt-Ausgabe."""
+    project = project_dir(project_id)
+    output_png = project / "outputs" / "pipeline-validation.png"
+    if not output_png.is_file():
+        raise HTTPException(404, "Keine PNG-Ausgabe fuer C2PA-Pruefung gefunden")
+    return verify_png_content_credentials(output_png.read_bytes())
 
 
 @app.get("/projects/{project_id}/provenance")

@@ -24,6 +24,8 @@ from core.part_library import DEFAULT_LIBRARY
 from core.manufacturing_export import generate_jlcpcb_bom, generate_jlcpcb_cpl
 from core.step_export import generate_step
 from core.enclosure_gen import generate_openscad_case
+from core.cad_enclosure_v2 import EnclosureParams, generate_build123d_script, validate_enclosure_geometry
+from core.panelizer import PanelConfig, panelize_board
 from core.export_manifest import build_export_manifest, summarize_board
 from core.job_runner import EDAJobRunner
 from core.telemetry_log import record_server_event
@@ -232,7 +234,7 @@ def capabilities_endpoint(ram_gb: float = 8.0) -> JSONResponse:
             "service": "eda-multiagent-core",
             "policy": "deterministic-solvers; quality-first without DRC relaxation",
             "solvers": ["z3-pin-multiplex", "force-directed-placer", "pathfinder-astar", "spatial-hash-drc"],
-            "exporters": ["kicad-v8", "rs274x-gerber", "excellon-drill", "step-ap214", "openscad-enclosure", "jlcpcb-bom", "jlcpcb-cpl", "sha256-manifest"],
+            "exporters": ["kicad-v8", "rs274x-gerber", "excellon-drill", "gerber-verifier", "panelizer-vcut-mousebites", "step-ap214", "openscad-enclosure", "build123d-enclosure-validator", "jlcpcb-bom", "jlcpcb-cpl", "sha256-manifest"],
             "templates": [t["id"] for t in list_templates()],
             "kicad_cli": detect_kicad_cli(),
             "resource_plan": resource_plan,
@@ -298,6 +300,54 @@ def search_parts_endpoint(q: str = "", category: Optional[str] = None, limit: in
     """Durchsucht den lokalen LCSC/JLCPCB-SQLite-Katalog."""
     parts = DEFAULT_LIBRARY.search_parts(q, category=category, limit=limit)
     return JSONResponse(content={"count": len(parts), "parts": [p.model_dump() for p in parts]})
+
+
+@app.post("/export/panel")
+def export_panel_endpoint(
+    rows: int = 2,
+    cols: int = 2,
+    rail_width_mm: float = 5.0,
+    spacing_mm: float = 2.0,
+    cut_mode: str = "vcut",
+    board: Optional[BoardState] = Body(default=None),
+) -> JSONResponse:
+    """Erzeugt einen deterministischen Fertigungsnutzen (V-Cut / Mousebites) inkl. Gerber/Excellon."""
+    target_board = _assembly_board(board)
+    try:
+        cfg = PanelConfig(
+            rows=rows,
+            cols=cols,
+            rail_width_mm=rail_width_mm,
+            spacing_mm=spacing_mm,
+            cut_mode=cut_mode,  # type: ignore[arg-type]
+        )
+        panel = panelize_board(target_board, cfg)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return JSONResponse(content=panel)
+
+
+@app.post("/export/enclosure/validate")
+def validate_enclosure_endpoint(
+    wall_thickness_mm: float = 2.4,
+    pcb_clearance_mm: float = 0.6,
+    internal_height_mm: float = 18.0,
+    fillet_radius_mm: float = 1.0,
+    include_build123d_script: bool = True,
+    board: Optional[BoardState] = Body(default=None),
+) -> JSONResponse:
+    """Validiert Gehaeuse-DFM-Invarianten und liefert optional ein ausfuehrbares build123d-Skript."""
+    target_board = _assembly_board(board)
+    params = EnclosureParams(
+        wall_thickness_mm=wall_thickness_mm,
+        pcb_clearance_mm=pcb_clearance_mm,
+        internal_height_mm=internal_height_mm,
+        fillet_radius_mm=fillet_radius_mm,
+    )
+    report = validate_enclosure_geometry(target_board, params)
+    if include_build123d_script:
+        report["build123d_script"] = generate_build123d_script(target_board, params)
+    return JSONResponse(content=report)
 
 
 @app.post("/jobs")

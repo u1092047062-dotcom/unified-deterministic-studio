@@ -10,13 +10,15 @@ Konvergierte Engineering-Plattform, die die Architekturen, Qualitaets-Invariante
 
 ```text
 unified-deterministic-studio/
-├── packages/platform_core/         # Gemeinsamer Stdlib-Kern (Provenienz, Telemetrie, JobStore, ResourceGuard, Security)
+├── packages/
+│   ├── platform_core/              # Gemeinsamer Stdlib-Kern (Provenienz, C2PA Content Credentials, Telemetrie, JobStore, ResourceGuard, Security)
+│   └── platform_mcp/               # Nativer JSON-RPC-2.0 MCP-Server (Stdio & HTTP /mcp) fuer EDA, ART & Security-Tools
 ├── apps/
-│   ├── platform_gateway/           # Lokales Control-Hub, Cockpit UI & Interaktiver Simulator (127.0.0.1:8080/simulator)
-│   ├── eda-multiagent-core/        # Deterministische PCB-Pipeline + Synthesizer + RS-274X Gerber/Excellon + Rust core_fast + Tauri
-│   └── art-restoration-ai/         # Quality-First Restaurierungs-Engine + Checkpoint-Verifier + Projekt-Provenienz + Telemetrie
+│   ├── platform_gateway/           # Lokales Control-Hub, Cockpit UI, MCP-Endpunkt & 100%-Simulator (127.0.0.1:8080/simulator)
+│   ├── eda-multiagent-core/        # Deterministische PCB-Pipeline + Synthesizer + jlcparts-Importer + Gerber-Verifier + Panelizer + build123d-Validator + Rust core_fast + Tauri
+│   └── art-restoration-ai/         # Quality-First Restaurierungs-Engine + Spandrel-Adapter + pyvips-Streaming-I/O + C2PA + Checkpoint-Verifier + Telemetrie
 ├── services/
-│   └── terra-remote-engine/        # Rust 1.2 Monitoring-Sidecar (EDA + ART Watchlist, /tail eda|art, /getlog eda|art)
+│   └── terra-remote-engine/        # Rust 1.2 Monitoring-Sidecar (Watchlist, /tail eda|art, /getlog eda|art, rotierendes Debug-Log, Win32 C:/D: Disk-Monitor)
 ├── scripts/
 │   ├── install_platform.ps1        # Ein-Klick-Setup fuer dedizierte lokale .venv
 │   ├── start_platform.ps1          # Lokaler Launcher (127.0.0.1) fuer Gateway, EDA oder ART

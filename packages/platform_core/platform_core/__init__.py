@@ -5,6 +5,15 @@ Unifies battle-tested patterns from:
 - Topaz / ART-Restoration-AI (atomic resumable job state, config-hash locking, quality-first resource guard)
 """
 
+from platform_core.c2pa_credentials import (
+    C2PA_SCHEMA_VERSION,
+    build_c2pa_manifest,
+    compute_png_pixel_digest,
+    detect_c2pa_backend,
+    embed_png_content_credentials,
+    read_png_content_credentials,
+    verify_png_content_credentials,
+)
 from platform_core.job_store import JobStore, atomic_write_json, compute_config_hash
 from platform_core.provenance import (
     MANIFEST_SCHEMA_VERSION,
@@ -23,20 +32,27 @@ from platform_core.security import scan_text_for_secrets, validate_safe_path
 from platform_core.telemetry import PlatformTelemetryLogger, sanitize_payload
 
 __all__ = [
+    "C2PA_SCHEMA_VERSION",
     "MANIFEST_SCHEMA_VERSION",
     "JobStore",
     "PlatformTelemetryLogger",
     "ResourcePlan",
     "atomic_write_json",
+    "build_c2pa_manifest",
     "build_provenance_manifest",
     "compute_config_hash",
+    "compute_png_pixel_digest",
+    "detect_c2pa_backend",
+    "embed_png_content_credentials",
     "enforce_budget_gate",
     "estimate_compute_cost",
     "plan_resources",
+    "read_png_content_credentials",
     "sanitize_payload",
     "scan_text_for_secrets",
     "sha256_bytes",
     "sha256_file",
     "validate_safe_path",
     "verify_file_checksum",
+    "verify_png_content_credentials",
 ]

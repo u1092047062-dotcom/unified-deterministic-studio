@@ -40,6 +40,11 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 from pydantic import BaseModel, Field
 
+from platform_core.c2pa_credentials import (
+    build_c2pa_manifest,
+    embed_png_content_credentials,
+    verify_png_content_credentials,
+)
 from platform_core.job_store import compute_config_hash
 from platform_core.provenance import build_provenance_manifest, sha256_file
 from platform_core.resource_guard import (
@@ -646,7 +651,20 @@ class PlatformSimulator:
                     worked = ImageEnhance.Color(worked).enhance(1.10)
 
                 result_path = sdir / "simulated_restored.png"
-                worked.save(result_path, format="PNG")
+                raw_buf = BytesIO()
+                worked.save(raw_buf, format="PNG")
+                c2pa_manifest = build_c2pa_manifest(
+                    title=f"sim-{req.session_id}-{session['filename']}.png",
+                    source_sha256=session["original_sha256"],
+                    actions=[
+                        {"action": "digital.simulation", "softwareAgent": "Unified Deterministic Studio Simulator"},
+                        {"action": f"restoration.{req.mode}", "parameters": {"model": req.model, "tile_size": req.tile_size}},
+                    ],
+                    ai_disclosed=True,
+                    simulated=True,
+                    extra_metadata={"session_id": req.session_id, "quality_profile": req.quality_profile},
+                )
+                result_path.write_bytes(embed_png_content_credentials(raw_buf.getvalue(), c2pa_manifest))
                 out_w, out_h = worked.size
 
                 src_arr = np.asarray(src_rgb, dtype=np.float32)
@@ -1287,6 +1305,15 @@ def sim_get_provenance(session_id: str) -> JSONResponse:
     if not manifest_path.is_file():
         raise HTTPException(404, "Noch kein Provenienz-Manifest erzeugt")
     return JSONResponse(content=json.loads(manifest_path.read_text(encoding="utf-8")))
+
+
+@sim_router.get("/media/{session_id}/c2pa")
+def sim_get_c2pa(session_id: str) -> JSONResponse:
+    SIMULATOR._session_dir(session_id)
+    result_path = SIMULATOR.sessions[session_id].get("result_path")
+    if not result_path or not Path(result_path).is_file():
+        raise HTTPException(404, "Noch kein Simulationsergebnis fuer C2PA-Pruefung vorhanden")
+    return JSONResponse(content=verify_png_content_credentials(Path(result_path).read_bytes()))
 
 
 @sim_router.post("/telegram/command")
