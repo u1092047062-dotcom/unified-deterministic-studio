@@ -37,6 +37,7 @@ from platform_core.durable_workflow import DurableWorkflowEngine
 from platform_core.otel_tracing import PlatformTracer
 from platform_core.resource_guard import plan_resources
 from platform_core.telemetry import sanitize_payload
+from platform_mcp.a2a_orchestrator import build_a2a_agent_card, dispatch_a2a_task
 from platform_mcp.server import handle_jsonrpc_request, list_mcp_tools
 
 from core.board_synthesizer import list_templates
@@ -188,6 +189,24 @@ def trust_status() -> JSONResponse:
 async def trust_verify_png(file: UploadFile = File(...)) -> JSONResponse:
     raw = await file.read()
     return JSONResponse(content=verify_signed_png_c2pa(raw))
+
+
+@gateway.get("/.well-known/agent.json")
+def a2a_agent_card() -> JSONResponse:
+    return JSONResponse(content=build_a2a_agent_card())
+
+
+@gateway.post("/a2a/tasks")
+def a2a_dispatch_task(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    try:
+        res = dispatch_a2a_task(
+            payload,
+            db_path=Path(os.environ.get("PLATFORM_WORKFLOW_DB", str(REPO_ROOT / "logs" / "workflows.sqlite"))),
+            span_log_path=_trace_log_path(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return JSONResponse(content=res)
 
 
 if __name__ == "__main__":

@@ -11,12 +11,12 @@ Konvergierte Engineering-Plattform, die die Architekturen, Qualitaets-Invariante
 ```text
 unified-deterministic-studio/
 ├── packages/
-│   ├── platform_core/              # Gemeinsamer Stdlib-Kern (Provenienz, C2PA Content Credentials, Telemetrie, JobStore, ResourceGuard, Security)
-│   └── platform_mcp/               # Nativer JSON-RPC-2.0 MCP-Server (Stdio & HTTP /mcp) fuer EDA, ART & Security-Tools
+│   ├── platform_core/              # Stdlib-Kern: Provenienz, C2PA + RFC-8032 Ed25519 + Sigstore-Merkle, SQLite-WAL Durable Workflows, W3C OTLP Tracer, Telemetrie, ResourceGuard, Security
+│   └── platform_mcp/               # Nativer JSON-RPC-2.0 MCP-Server (12 Tools) + A2A Closed-Loop Multi-Agent-Orchestrierung (/.well-known/agent.json, /a2a/tasks)
 ├── apps/
-│   ├── platform_gateway/           # Lokales Control-Hub, Cockpit UI, MCP-Endpunkt & 100%-Simulator (127.0.0.1:8080/simulator)
-│   ├── eda-multiagent-core/        # Deterministische PCB-Pipeline + Synthesizer + jlcparts-Importer + Gerber-Verifier + Panelizer + build123d-Validator + Rust core_fast + Tauri
-│   └── art-restoration-ai/         # Quality-First Restaurierungs-Engine + Spandrel-Adapter + pyvips-Streaming-I/O + C2PA + Checkpoint-Verifier + Telemetrie
+│   ├── platform_gateway/           # Lokales Control-Hub (127.0.0.1:8080): Cockpit (/), 100%-Simulator (/simulator), WebGPU Frontier Inspector (/inspector), MCP (/mcp), A2A & Trust-Verifier (/trust/verify)
+│   ├── eda-multiagent-core/        # Deterministische PCB-Pipeline + Hardware-as-Code Z3 + IPC-2152/Crosstalk/S-Param/OpenEMS + 3D-Kollisionscheck + KiCad 9 IPC + jlcparts + Gerber-Verifier + Panelizer + build123d-Validator + Rust core_fast + Tauri
+│   └── art-restoration-ai/         # Quality-First Engine + 32-Bit Linear ACEScg/OCIO + SOTA-Router (NAFNet/HAT vs. SeedVR2/SUPIR) + Hallucination-Delta-Gate + Spandrel + pyvips + C2PA + Checkpoint-Verifier
 ├── services/
 │   └── terra-remote-engine/        # Rust 1.2 Monitoring-Sidecar (Watchlist, /tail eda|art, /getlog eda|art, rotierendes Debug-Log, Win32 C:/D: Disk-Monitor)
 ├── scripts/

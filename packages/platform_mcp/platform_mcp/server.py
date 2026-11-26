@@ -30,17 +30,22 @@ from platform_core.resource_guard import enforce_budget_gate, estimate_compute_c
 from platform_core.security import scan_text_for_secrets
 from platform_core.telemetry import sanitize_payload
 
+from core.assembly_collision_3d import check_3d_assembly_collisions
 from core.board_synthesizer import build_template_board, list_templates
+from core.em_thermal_sim import simulate_board_physics
 from core.export_manifest import build_export_manifest, summarize_board
 from core.gerber_export import detect_kicad_cli, export_gerber_bundle
 from core.gerber_verifier import detect_pygerber, verify_and_render_gerbers
+from core.hardware_as_code import compile_hac_to_board
 from core.kicad_export import export_kicad_pcb
 from core.part_library import DEFAULT_LIBRARY
 from core.pipeline_v2 import DesignPipeline
 
+from restoration.sota_router import select_sota_restoration_plan
 from restoration.spandrel_adapter import spandrel_runtime_status
 from restoration.streaming_io import detect_streaming_backend
 from restoration.tiling import plan_tiles
+from platform_mcp.a2a_orchestrator import run_closed_loop_pcb_agent
 
 MCP_PROTOCOL_VERSION = "2024-11-05"
 
@@ -116,6 +121,44 @@ def _tool_platform_status(_args: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _tool_eda_compile_hac(args: Dict[str, Any]) -> Dict[str, Any]:
+    res = compile_hac_to_board(str(args.get("source", "")))
+    return {
+        "compiled": res["compiled"],
+        "proof": res["proof"],
+        "component_count": len(res["board"].components) if res["board"] else 0,
+    }
+
+
+def _tool_eda_simulate_physics(args: Dict[str, Any]) -> Dict[str, Any]:
+    template_id = str(args.get("template_id", "esp32_i2c_sensor"))
+    routed = DesignPipeline().run(build_template_board(template_id)).board
+    return simulate_board_physics(routed, copper_oz=float(args.get("copper_oz", 1.0)))
+
+
+def _tool_eda_check_3d_assembly(args: Dict[str, Any]) -> Dict[str, Any]:
+    template_id = str(args.get("template_id", "esp32_i2c_sensor"))
+    return check_3d_assembly_collisions(build_template_board(template_id))
+
+
+def _tool_art_route_sota(args: Dict[str, Any]) -> Dict[str, Any]:
+    return select_sota_restoration_plan(
+        quality_profile=str(args.get("quality_profile", "museum_fidelity")),
+        media_type=str(args.get("media_type", "photo")),
+        vram_gb=float(args.get("vram_gb", 24.0)),
+        damage_level=str(args.get("damage_level", "moderate")),
+        allow_generative=bool(args.get("allow_generative", False)),
+    )
+
+
+def _tool_agent_closed_loop_pcb(args: Dict[str, Any]) -> Dict[str, Any]:
+    return run_closed_loop_pcb_agent(
+        template_id=str(args.get("template_id", "esp32_i2c_sensor")),
+        hac_source=args.get("hac_source"),
+        workflow_id=args.get("workflow_id"),
+    )
+
+
 _TOOLS: Dict[str, Dict[str, Any]] = {
     "eda_list_templates": {
         "description": "Listet alle deterministischen EDA-Platinen-Templates auf.",
@@ -183,6 +226,55 @@ _TOOLS: Dict[str, Dict[str, Any]] = {
         "description": "Liefert den Verfuegbarkeitsstatus optionaler Backends (KiCad-CLI, pygerber, Spandrel, pyvips).",
         "inputSchema": {"type": "object", "properties": {}},
         "handler": _tool_platform_status,
+    },
+    "eda_compile_hac": {
+        "description": "Beweist Hardware-as-Code-Elektrik via Z3-SMT und kompiliert bei SAT in BoardState.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["source"],
+            "properties": {"source": {"type": "string"}},
+        },
+        "handler": _tool_eda_compile_hac,
+    },
+    "eda_simulate_physics": {
+        "description": "Fuehrt IPC-2152-Thermik, PDN-IR-Drop, Crosstalk und S-Parameter-Pre-Signoff aus.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "template_id": {"type": "string", "default": "esp32_i2c_sensor"},
+                "copper_oz": {"type": "number", "default": 1.0},
+            },
+        },
+        "handler": _tool_eda_simulate_physics,
+    },
+    "eda_check_3d_assembly": {
+        "description": "Prueft 3D-Baugruppen-Interferenzen (Platine + Bauteile + Gehaeuse/Deckel).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"template_id": {"type": "string", "default": "esp32_i2c_sensor"}},
+        },
+        "handler": _tool_eda_check_3d_assembly,
+    },
+    "art_route_sota": {
+        "description": "Waehlt deterministisch Stufe A (NAFNet/HAT) oder Stufe B (SeedVR2/SUPIR) inkl. Hallucination-Gate.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "quality_profile": {"type": "string", "default": "museum_fidelity"},
+                "media_type": {"type": "string", "default": "photo"},
+                "vram_gb": {"type": "number", "default": 24.0},
+                "allow_generative": {"type": "boolean", "default": False},
+            },
+        },
+        "handler": _tool_art_route_sota,
+    },
+    "agent_closed_loop_pcb": {
+        "description": "Startet den dauerhaft journalisierten, Ed25519-signierten Closed-Loop-PCB-Agenten.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"template_id": {"type": "string", "default": "esp32_i2c_sensor"}},
+        },
+        "handler": _tool_agent_closed_loop_pcb,
     },
 }
 
