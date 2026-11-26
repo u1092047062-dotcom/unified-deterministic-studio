@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Web-CAD Ultra-Engine</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #0a0c10; font-family: monospace; }
+        #menubar { position: fixed; top: 0; left: 0; right: 0; height: 40px; background: #0d1117; border-bottom: 1px solid #30363d; display: none; align-items: center; gap: 8px; padding: 0 12px; z-index: 10; }
+        #menubar .title { color: #58a6ff; font-size: 13px; margin-right: 12px; }
+        #menubar button { background: #21262d; color: #58a6ff; border: 1px solid #30363d; border-radius: 4px; padding: 5px 10px; font-family: monospace; cursor: pointer; }
+        #menubar button:hover { border-color: #58a6ff; }
+        #menubar #mode { margin-left: auto; color: #8b949e; font-size: 11px; }
+        body.tauri #overlay { top: 52px; }
+        #overlay { position: absolute; top: 12px; left: 12px; background: rgba(13, 17, 23, 0.92); border: 1px solid #30363d; border-radius: 6px; padding: 12px 14px; color: #8b949e; max-width: 420px; }
+        #overlay h1 { margin: 0 0 6px 0; font-size: 14px; color: #58a6ff; }
+        #wsState { font-size: 11px; }
+        #stats { margin-top: 6px; font-size: 12px; color: #c9d1d9; }
+        #stats .bad { color: #f85149; font-weight: bold; }
+        #report { margin-top: 8px; font-size: 11px; line-height: 1.5; color: #7ee787; max-height: 220px; overflow-y: auto; white-space: pre-wrap; }
+        #rerun { margin-top: 8px; background: #21262d; color: #58a6ff; border: 1px solid #30363d; border-radius: 4px; padding: 4px 10px; font-family: monospace; cursor: pointer; }
+        #rerun:hover { border-color: #58a6ff; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <div id="menubar">
+        <span class="title">EDA CAD STUDIO</span>
+        <button id="expKicad" type="button">Export KiCad</button>
+        <button id="expStep" type="button">Export STEP</button>
+        <button id="expScad" type="button">Export OpenSCAD</button>
+        <span id="mode"></span>
+    </div>
+    <div id="overlay">
+        <h1>WEB-CAD VIEWER <span id="wsState">verbinde&hellip;</span></h1>
+        <div id="stats">&ndash;</div>
+        <div id="report"></div>
+        <button id="rerun" type="button">Neu berechnen</button>
+        <button id="viewBottom" type="button">Unterseiten-Ansicht</button>
+    </div>
+    <script>
+        // ---------- Szene ----------
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.1, 2000);
+        camera.position.set(50, -70, 110);
+        camera.up.set(0, 0, 1);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setPixelRatio(window.devicePixelRatio);
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.target.set(50, 40, 0);
+        controls.enableDamping = true;
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const sun = new THREE.DirectionalLight(0xffffff, 0.6);
+        sun.position.set(80, -60, 120);
+        scene.add(sun);
+
+        // Platine: 100 x 80 x 1.6 mm, Oberflaeche bei z = 0
+        const boardGeom = new THREE.BoxGeometry(100, 80, 1.6);
+        boardGeom.translate(50, 40, -0.8);
+        scene.add(new THREE.Mesh(boardGeom, new THREE.MeshStandardMaterial({ color: 0x072818, roughness: 0.9 })));
+
+        // ---------- Instanzierte Renderobjekte (Invariant: strikt InstancedMesh) ----------
+        const LAYER_Z = { TOP: 0.05, BOTTOM: -1.65 };
+        const BODY_H = 1.6;
+
+        function makeInstanced(geometry, material, capacity, withColors) {
+            const mesh = new THREE.InstancedMesh(geometry, material, capacity);
+            mesh.count = 0;
+            mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+            if (withColors) {
+                // three r128 dimensioniert instanceColor in setColorAt nach
+                // mesh.count — bei count=0 entstünde ein leerer Puffer. Daher
+                // hier in voller Kapazität vorab anlegen (1.0 = Materialfarbe).
+                mesh.instanceColor = new THREE.BufferAttribute(new Float32Array(capacity * 3).fill(1), 3);
+            }
+            mesh.frustumCulled = false;
+            return mesh;
+        }
+
+        let compMesh = makeInstanced(new THREE.BoxGeometry(1, 1, 1),
+                                     new THREE.MeshStandardMaterial({ roughness: 0.7 }), 2048, true);
+        let viaMesh = makeInstanced(new THREE.CylinderGeometry(0.3, 0.3, 1.6, 10),
+                                    new THREE.MeshStandardMaterial({ color: 0xd8b34a, metalness: 0.6, roughness: 0.4 }), 8192);
+        const pinMesh = makeInstanced(new THREE.BoxGeometry(0.5, 0.5, 0.4),
+                                      new THREE.MeshStandardMaterial({ color: 0xd8b34a, metalness: 0.7, roughness: 0.3 }), 8192);
+        scene.add(compMesh, viaMesh, pinMesh);
+
+        // Traces: genau EIN LineSegments-Objekt mit Vertexfarben (1 Draw-Call)
+        let traceSegments = new THREE.LineSegments(
+            new THREE.BufferGeometry(),
+            new THREE.LineBasicMaterial({ vertexColors: true }));
+        traceSegments.frustumCulled = false;
+        scene.add(traceSegments);
+
+        // DRC-Fehlermarker: genau EIN Points-Objekt
+        let errorPoints = new THREE.Points(
+            new THREE.BufferGeometry(),
+            new THREE.PointsMaterial({ color: 0xff3355, size: 1.4 }));
+        errorPoints.frustumCulled = false;
+        scene.add(errorPoints);
+
+        // Kupferflächen (BOTTOM): je Region ein ShapeGeometry mit Löchern,
+        // gemeinsamem Material, leicht vor der Board-Unterseite (kein
+        // Z-Fighting); Traces bei z=-1.65 liegen darunter und bleiben sichtbar.
+        const pourMaterial = new THREE.MeshStandardMaterial({
+            color: 0x11683a, roughness: 0.75, metalness: 0.2, side: THREE.DoubleSide });
+        const POUR_Z = -1.62;
+        let pourGroup = new THREE.Group();
+        scene.add(pourGroup);
+
+        // ---------- Farbreduktion ----------
+        const _colorCache = {};
+        let _netHueCounter = 0;
+        function netColor(netId) {
+            if (!_colorCache[netId]) {
+                // Goldener Winkel: aufeinanderfolgende Netze bekommen
+                // maximal getrennte Farbtöne (Server-Reihenfolge ist stabil).
+                _colorCache[netId] = new THREE.Color().setHSL((_netHueCounter++ * 0.382) % 1, 0.75, 0.55);
+            }
+            return _colorCache[netId];
+        }
+        function categoryColor(category) {
+            switch (category) {
+                case "MCU": return new THREE.Color(0x2f6fed);
+                case "Resistor": return new THREE.Color(0x2a2a2a);
+                case "Capacitor": return new THREE.Color(0x8a5a2a);
+                default: return new THREE.Color(0x606870);
+            }
+        }
+
+        // ---------- Instanz-Updates ----------
+        const _m = new THREE.Matrix4(), _p = new THREE.Vector3(),
+              _q = new THREE.Quaternion(), _s = new THREE.Vector3(), _e = new THREE.Euler();
+
+        function updateInstanced(mesh, count, fill) {
+            if (count > mesh.instanceMatrix.count) {
+                scene.remove(mesh);
+                mesh.dispose();
+                mesh = makeInstanced(mesh.geometry, mesh.material, count * 2);
+            }
+            scene.add(mesh);
+            for (let i = 0; i < count; i++) fill(i, mesh);
+            mesh.count = count;
+            mesh.instanceMatrix.needsUpdate = true;
+            if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+            return mesh;
+        }
+
+        function updateComponents(components) {
+            const ids = Object.keys(components);
+            compMesh = updateInstanced(compMesh, ids.length, (i, mesh) => {
+                const c = components[ids[i]];
+                _p.set(c.x, c.y, BODY_H / 2);
+                _q.setFromEuler(_e.set(0, 0, (c.rotation || 0) * Math.PI / 180));
+                _s.set(c.body_w || 4, c.body_h || 3, BODY_H);
+                mesh.setMatrixAt(i, _m.compose(_p, _q, _s));
+                mesh.setColorAt(i, categoryColor(c.category));
+            });
+        }
+
+        function updateVias(vias) {
+            viaMesh = updateInstanced(viaMesh, vias.length, (i, mesh) => {
+                const v = vias[i];
+                _p.set(v.x, v.y, -0.8);
+                _q.identity();
+                _s.set(1, 1, 1);
+                mesh.setMatrixAt(i, _m.compose(_p, _q, _s));
+            });
+        }
+
+        function updatePins(components) {
+            let n = 0;
+            for (const id in components) {
+                for (const pid in components[id].pins) {
+                    const pin = components[id].pins[pid];
+                    if (pin.x === null || pin.x === undefined || n >= pinMesh.instanceMatrix.count) continue;
+                    _p.set(pin.x, pin.y, 0.2);
+                    _q.identity();
+                    _s.set(1, 1, 1);
+                    pinMesh.setMatrixAt(n++, _m.compose(_p, _q, _s));
+                }
+            }
+            pinMesh.count = n;
+            pinMesh.instanceMatrix.needsUpdate = true;
+        }
+
+        function updateTraces(traces) {
+            const pos = [], col = [];
+            for (const t of traces) {
+                const z = LAYER_Z[t.layer] !== undefined ? LAYER_Z[t.layer] : 0.05;
+                const c = netColor(t.net_id);
+                const p = t.path;
+                for (let i = 0; i + 1 < p.length; i++) {
+                    pos.push(p[i][0], p[i][1], z, p[i + 1][0], p[i + 1][1], z);
+                    col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+                }
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+            geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+            traceSegments.geometry.dispose();
+            traceSegments.geometry = geo;
+        }
+
+        function updateErrors(errors) {
+            const pos = [];
+            for (const err of errors) {
+                if (err.location) pos.push(err.location[0], err.location[1], 0.4);
+            }
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+            errorPoints.geometry.dispose();
+            errorPoints.geometry = geo;
+        }
+
+        function updateCopperPours(pours) {
+            pourGroup.clear();
+            for (const pour of (pours || [])) {
+                if (!pour.outer || pour.outer.length < 3) continue;
+                const shape = new THREE.Shape(pour.outer.map(p => new THREE.Vector2(p[0], p[1])));
+                for (const hole of (pour.holes || [])) {
+                    if (hole.length >= 3) {
+                        shape.holes.push(new THREE.Path(hole.map(p => new THREE.Vector2(p[0], p[1]))));
+                    }
+                }
+                const geo = new THREE.ShapeGeometry(shape);
+                const mesh = new THREE.Mesh(geo, pourMaterial);
+                mesh.position.z = POUR_Z;
+                pourGroup.add(mesh);
+            }
+        }
+
+        // ---------- UI ----------
+        const wsStateEl = document.getElementById("wsState");
+        const statsEl = document.getElementById("stats");
+        const reportEl = document.getElementById("report");
+        document.getElementById("rerun").addEventListener("click", requestBoard);
+        document.getElementById("viewBottom").addEventListener("click", () => {
+            const below = camera.position.z < 0;
+            camera.position.set(50, below ? -70 : 70, below ? 110 : -110);
+            controls.target.set(50, 40, 0);
+            controls.update();
+        });
+
+        function setWsState(text, color) {
+            wsStateEl.textContent = " [" + text + "]";
+            wsStateEl.style.color = color;
+        }
+
+        function renderBoard(board, report) {
+            currentBoard = board;
+            updateComponents(board.components);
+            updateVias(board.vias);
+            updatePins(board.components);
+            updateTraces(board.traces);
+            updateErrors(board.errors);
+            updateCopperPours(board.copper_pours);
+
+            const nErrors = board.errors.length;
+            const nPours = (board.copper_pours || []).length;
+            statsEl.innerHTML =
+                "Bauteile " + Object.keys(board.components).length +
+                " &middot; Netze " + Object.keys(board.nets).length +
+                " &middot; Traces " + board.traces.length +
+                " &middot; Vias " + board.vias.length +
+                " &middot; Pours " + nPours +
+                " &middot; DRC-Fehler <span class='" + (nErrors ? "bad" : "") + "'>" + nErrors + "</span>" +
+                " &middot; Draw-Calls <span id='drawCalls'>&ndash;</span>";
+
+            if (report) {
+                reportEl.textContent = "[" + report.status + " nach " + report.attempts + " Versuch(en)]\n"
+                    + report.log.join("\n");
+            }
+        }
+
+        // ---------- Desktop-Modus (Tauri IPC) vs. Browser (WebSocket) ----------
+        const IS_TAURI = !!(window.__TAURI__ && window.__TAURI__.core);
+        let currentBoard = null;
+
+        const TAURI_DEMO = {
+            width: 100, height: 80,
+            components: [
+                { id: "U1", name: "ESP32", x: 30, y: 40, body_w: 5, body_h: 5,
+                  pins: { "1": { x: 27.5, y: 42.5 }, "2": { x: 27.5, y: 40 } } },
+                { id: "R1", name: "R_10k", x: 70, y: 40, body_w: 2, body_h: 1.25,
+                  pins: { "1": { x: 69, y: 40 }, "2": { x: 71, y: 40 } } },
+            ],
+            nets: [
+                { id: "NET_SDA", points: [[27.5, 42.5], [69, 40]] },
+                { id: "NET_SCL", points: [[27.5, 40], [71, 40]] },
+            ],
+        };
+
+        function tauriRoute() {
+            setWsState("native IPC", "#3fb950");
+            window.__TAURI__.core.invoke("route_board_native", {
+                boardJson: JSON.stringify(TAURI_DEMO),
+            }).then((raw) => {
+                const paths = JSON.parse(raw);
+                if (paths.error) throw new Error(paths.error);
+                currentBoard = buildTauriBoard(paths);
+                renderBoard(currentBoard, {
+                    status: "OK", attempts: 1,
+                    log: ["Native Rust-A* (core_fast): " + paths.length + " Netz(e) geroutet"],
+                });
+            }).catch((err) => setWsState("IPC-Fehler: " + err, "#f85149"));
+        }
+
+        function buildTauriBoard(paths) {
+            const board = { width: TAURI_DEMO.width, height: TAURI_DEMO.height,
+                            components: {}, nets: {}, traces: [], vias: [],
+                            copper_pours: [], errors: [] };
+            for (const comp of TAURI_DEMO.components) {
+                const pins = {};
+                for (const pid in comp.pins) {
+                    pins[pid] = { id: pid, name: pid, x: comp.pins[pid].x, y: comp.pins[pid].y };
+                }
+                board.components[comp.id] = { id: comp.id, name: comp.name, category: "IC",
+                    footprint: "NATIVE", x: comp.x, y: comp.y,
+                    body_w: comp.body_w, body_h: comp.body_h, pins: pins };
+            }
+            for (const net of TAURI_DEMO.nets) {
+                board.nets[net.id] = { id: net.id, name: net.id, nodes: [] };
+            }
+            const LAYERS = ["TOP", "BOTTOM"];
+            for (const path of paths) {
+                for (const p of path.points) {
+                    board.traces.push({ net_id: path.net, layer: LAYERS[p.layer] || "TOP",
+                                        width: 0.2, path: [[p.x, p.y]] });
+                }
+                // Punkte zu Pfaden verdichten (aufeinanderfolgende Punkte je Layer)
+                const merged = [];
+                for (const seg of board.traces.filter((t) => t.net_id === path.net)) {
+                    if (merged.length && merged[merged.length - 1].layer === seg.layer) {
+                        merged[merged.length - 1].path.push(seg.path[0]);
+                    } else { merged.push(seg); }
+                }
+                board.traces = board.traces.filter((t) => t.net_id !== path.net).concat(merged);
+            }
+            return board;
+        }
+
+        // ---------- Export-Emitter (KiCad / STEP / OpenSCAD) ----------
+
+        function fmtNum(v) {
+            const t = (+v).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+            return (t === "" || t === "-0") ? "0" : t;
+        }
+        function escAttr(s) { return String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"'); }
+        const KIAD_LAYERS = [["0", "F.Cu", "signal"], ["1", "In1.Cu", "signal"],
+                             ["2", "In2.Cu", "signal"], ["31", "B.Cu", "signal"],
+                             ["37", "F.SilkS", "user"], ["39", "F.Mask", "user"],
+                             ["44", "Edge.Cuts", "user"], ["49", "F.Fab", "user"]];
+
+        function buildKicad(board) {
+            const out = [];
+            const w = (s) => out.push(s);
+            const netNum = {}; let n = 1;
+            for (const id in board.nets) { netNum[id] = n; n++; }
+            w("(kicad_pcb)");
+            w("  (version 20240108)");
+            w('  (generator "eda-multiagent-core")');
+            w('  (generator_version "1.0")');
+            w("  (general (thickness 1.6) (legacy_teardrops no))");
+            w('  (paper "A4")');
+            w("  (layers)");
+            for (const [id, name, kind] of KIAD_LAYERS) {
+                w(`    (${id} "${name}" ${kind})`);
+            }
+            w("  )");
+            w("  (setup (pad_to_mask_clearance 0) (allow_soldermask_bridges_in_footprints no))");
+            w('  (net 0 "")');
+            for (const id in board.nets) {
+                w(`  (net ${netNum[id]} "${escAttr(board.nets[id].name || id)}")`);
+            }
+            for (const id in board.components) {
+                const c = board.components[id];
+                const hw = (c.body_w || 4) / 2, hh = (c.body_h || 3) / 2;
+                w(`  (footprint "eda-core:${escAttr(c.footprint)}"`);
+                w('    (layer "F.Cu")');
+                w(`    (at ${fmtNum(c.x)} ${fmtNum(board.height - c.y)})`);
+                w("    (attr smd)");
+                const corners = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]];
+                for (let i = 0; i < 4; i++) {
+                    const a = corners[i], b = corners[(i + 1) % 4];
+                    w(`    (fp_line (start ${fmtNum(a[0])} ${fmtNum(a[1])}) (end ${fmtNum(b[0])} ${fmtNum(b[1])}) (stroke (width 0.1) (type solid)) (layer "F.Fab") (uuid "00000000-0000-0000-0000-${String(1000 + i).padStart(12, "0")}"))`);
+                }
+                for (const pid in (c.pins || {})) {
+                    const pin = c.pins[pid];
+                    const rx = (pin.x === null || pin.x === undefined ? c.x : pin.x) - c.x;
+                    const ry = -((pin.y === null || pin.y === undefined ? c.y : pin.y) - c.y);
+                    const netId = Object.keys(board.nets).find((nid) =>
+                        (board.nets[nid].nodes || []).some((nd) => nd[0] === id && nd[1] === pid));
+                    const netTok = netId ? ` (net ${netNum[netId]} "${escAttr(board.nets[netId].name || netId)}")` : "";
+                    w(`    (pad "${escAttr(pid)}" smd roundrect (uuid "00000000-0000-0000-0000-${String(2000 + Number(pid) || 0).padStart(12, "0")}") (at ${fmtNum(rx)} ${fmtNum(ry)}) (size 1 1) (layers "F.Cu" "F.Paste" "F.Mask") (roundrect_rratio 0.25)${netTok})`);
+                }
+                w("  )");
+            }
+            for (const t of board.traces) {
+                const layer = ({ TOP: "F.Cu", INNER1: "In1.Cu", INNER2: "In2.Cu", BOTTOM: "B.Cu" })[t.layer] || "F.Cu";
+                const nt = netNum[t.net_id] ? ` (net ${netNum[t.net_id]})` : "";
+                const p = t.path;
+                for (let i = 0; i + 1 < p.length; i++) {
+                    w(`  (segment (start ${fmtNum(p[i][0])} ${fmtNum(board.height - p[i][1])}) (end ${fmtNum(p[i + 1][0])} ${fmtNum(board.height - p[i + 1][1])}) (width ${fmtNum(t.width)}) (layer "${layer}")${nt} (uuid "00000000-0000-0000-0000-${String(3000 + i).padStart(12, "0")}"))`);
+                }
+            }
+            for (const v of (board.vias || [])) {
+                const d = v.diameter || 0.6;
+                const nt = netNum[v.net_id] ? ` (net ${netNum[v.net_id]})` : "";
+                w(`  (via (at ${fmtNum(v.x)} ${fmtNum(board.height - v.y)}) (size ${fmtNum(d)}) (drill ${fmtNum(d / 2)}) (layers "F.Cu" "B.Cu")${nt})`);
+            }
+            const oc = [[0, 0], [board.width, 0], [board.width, board.height], [0, board.height]];
+            for (let i = 0; i < 4; i++) {
+                w(`  (gr_line (start ${fmtNum(oc[i][0])} ${fmtNum(oc[i][1])}) (end ${fmtNum(oc[(i + 1) % 4][0])} ${fmtNum(oc[(i + 1) % 4][1])}) (stroke (width 0.1) (type solid)) (layer "Edge.Cuts"))`);
+            }
+            w(")");
+            return out.join("\n") + "\n";
+        }
+
+        function buildScad(board) {
+            const f = fmtNum;
+            const posts = Object.values(board.components)
+                .filter((c) => /mountinghole/i.test(`${c.footprint} ${c.name} ${c.category}`.replace(/[_-]/g, "")))
+                .map((c) => `mounting_post(${f(c.x)}, ${f(c.y)});`);
+            const vars = {
+                wall: 2.0, clearance: 0.4, height_padding: 3.0, lip_height: 1.5,
+                board_w: board.width, board_h: board.height, board_t: 1.6,
+            };
+            return `// Parametrisches Gehaeuse (eda-multiagent-core, Tauri-Export)
+wall = ${f(vars.wall)}; clearance = ${f(vars.clearance)};
+height_padding = ${f(vars.height_padding)}; lip_height = ${f(vars.lip_height)};
+lip_w = 0.8; lid_fit = 0.2; post_d = 7.0; insert_hole_d = 3.5; post_cap = 3.0;
+board_w = ${f(vars.board_w)}; board_h = ${f(vars.board_h)}; board_t = ${f(vars.board_t)};
+comp_max_h = 1.6;
+inner_w = board_w + 2 * clearance; inner_h = board_h + 2 * clearance;
+outer_w = inner_w + 2 * wall; outer_h = inner_h + 2 * wall;
+floor_t = wall; tray_h = floor_t + board_t + comp_max_h + height_padding;
+origin_x = -(wall + clearance); origin_y = -(wall + clearance);
+
+module mounting_post(x, y) {
+    translate([x, y, floor_t]) difference() {
+        cylinder(d = post_d, h = board_t + post_cap, $fn = 48);
+        translate([0, 0, -0.1]) cylinder(d = insert_hole_d, h = board_t + post_cap + 0.2, $fn = 48);
+    }
+}
+
+module bottom_tray() {
+    difference() {
+        translate([origin_x, origin_y, 0]) cube([outer_w, outer_h, tray_h]);
+        translate([origin_x + wall, origin_y + wall, floor_t]) cube([inner_w, inner_h, tray_h]);
+    }
+    translate([origin_x + wall - lip_w, origin_y + wall - lip_w, tray_h - lip_height])
+        difference() {
+            cube([inner_w + 2 * lip_w, inner_h + 2 * lip_w, lip_height]);
+            translate([lip_w, lip_w, -0.1]) cube([inner_w, inner_h, lip_height + 0.2]);
+        }
+${posts.length ? posts.join("\n") : "// keine MountingHole-Komponenten"}
+}
+
+module top_lid() {
+    rim_w = lip_w + lid_fit;
+    lid_w = inner_w + 2 * rim_w + 2 * wall; lid_h = inner_h + 2 * rim_w + 2 * wall;
+    translate([outer_w + 10, 0, 0]) difference() {
+        cube([lid_w, lid_h, wall]);
+        translate([wall + rim_w, wall + rim_w, -0.1])
+            cube([inner_w + 2 * rim_w, inner_h + 2 * rim_w, wall + 0.2]);
+    }
+}
+
+bottom_tray();
+top_lid();
+`;
+        }
+
+        // STEP: Hexaeder-B-Reps (Portierung von core/step_export.py)
+        function buildStep(board) {
+            const EDGE_PAIRS = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4],
+                                [0, 4], [1, 5], [2, 6], [3, 7]];
+            const FACE_LOOPS = [
+                [[3, false], [2, false], [1, false], [0, false]],
+                [[4, true], [5, true], [6, true], [7, true]],
+                [[0, true], [9, true], [4, false], [8, false]],
+                [[1, true], [10, true], [5, false], [9, false]],
+                [[2, true], [11, true], [6, false], [10, false]],
+                [[3, true], [8, true], [7, false], [11, false]],
+            ];
+            const fs = (v) => { const t = (+v).toFixed(6).replace(/0+$/, "").replace(/\.$/, ""); return (t === "" || t === "-0") ? "0." : t + "."; };
+            let id = 0; const lines = [];
+            const add = (body) => { id++; lines.push(`#${id} = ${body};`); return id; };
+            const corners = (cx, cy, z0, z1, w, h, rot) => {
+                const a = (rot || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+                const hw = w / 2, hh = h / 2;
+                const local = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]];
+                const pts = [];
+                for (const [dx, dy] of local) pts.push([cx + dx * ca - dy * sa, cy + dx * sa + dy * ca, z0]);
+                for (const [dx, dy] of local) pts.push([cx + dx * ca - dy * sa, cy + dx * sa + dy * ca, z1]);
+                return pts;
+            };
+            const dist3 = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+            const addBox = (cs) => {
+                const pts = cs.map((p) => add(`CARTESIAN_POINT('',(${fs(p[0])},${fs(p[1])},${fs(p[2])}))`));
+                const verts = pts.map((p) => add(`VERTEX_POINT('',#${p})`));
+                const edges = EDGE_PAIRS.map(([a, b]) => {
+                    const d = [cs[b][0] - cs[a][0], cs[b][1] - cs[a][1], cs[b][2] - cs[a][2]];
+                    const len = dist3(cs[a], cs[b]);
+                    const dir = add(`DIRECTION('',(${fs(d[0] / len)},${fs(d[1] / len)},${fs(d[2] / len)}))`);
+                    const vec = add(`VECTOR('',#${dir},${fs(len)})`);
+                    const lin = add(`LINE('',#${pts[a]},#${vec})`);
+                    return add(`EDGE_CURVE('',#${verts[a]},#${verts[b]},#${lin},.T.)`);
+                });
+                const faces = FACE_LOOPS.map((loop) => {
+                    const oriented = loop.map(([ei, fwd]) =>
+                        add(`ORIENTED_EDGE('',*,*,#${edges[ei]},.${fwd ? "T" : "F"}.)`));
+                    const loopId = add(`EDGE_LOOP('',(${oriented.map((o) => "#" + o).join(",")}))`);
+                    const bound = add(`FACE_OUTER_BOUND('',#${loopId},.T.)`);
+                    const walk = loop.map(([ei, fwd]) => fwd ? cs[EDGE_PAIRS[ei][0]] : cs[EDGE_PAIRS[ei][1]]);
+                    let nx = 0, ny = 0, nz = 0;
+                    for (let i = 0; i < 4; i++) {
+                        const p1 = walk[i], p2 = walk[(i + 1) % 4];
+                        nx += (p1[1] - p2[1]) * (p1[2] + p2[2]);
+                        ny += (p1[2] - p2[2]) * (p1[0] + p2[0]);
+                        nz += (p1[0] - p2[0]) * (p1[1] + p2[1]);
+                    }
+                    const nl = Math.hypot(nx, ny, nz);
+                    const origin = add(`CARTESIAN_POINT('',(${fs(walk[0][0])},${fs(walk[0][1])},${fs(walk[0][2])}))`);
+                    const normal = add(`DIRECTION('',(${fs(nx / nl)},${fs(ny / nl)},${fs(nz / nl)}))`);
+                    const refEnd = loop[0][1] ? cs[EDGE_PAIRS[loop[0][0]][1]] : cs[EDGE_PAIRS[loop[0][0]][0]];
+                    const rd = [refEnd[0] - walk[0][0], refEnd[1] - walk[0][1], refEnd[2] - walk[0][2]];
+                    const rl = Math.hypot(rd[0], rd[1], rd[2]);
+                    const ref = add(`DIRECTION('',(${fs(rd[0] / rl)},${fs(rd[1] / rl)},${fs(rd[2] / rl)}))`);
+                    const axis = add(`AXIS2_PLACEMENT_3D('',#${origin},#${normal},#${ref})`);
+                    const plane = add(`PLANE('',#${axis})`);
+                    return add(`ADVANCED_FACE('',(#${bound}),#${plane},.T.)`);
+                });
+                const shell = add(`CLOSED_SHELL('',(${faces.map((f2) => "#" + f2).join(",")}))`);
+                return add(`MANIFOLD_SOLID_BREP('',#${shell})`);
+            };
+            const solids = [addBox(corners(board.width / 2, board.height / 2, -1.6, 0, board.width, board.height, 0))];
+            for (const c of Object.values(board.components)) {
+                solids.push(addBox(corners(c.x, c.y, 0, 1.6, c.body_w || 4, c.body_h || 3, c.rotation || 0)));
+            }
+            const origin = add("CARTESIAN_POINT('',(0.,0.,0.))");
+            const zdir = add("DIRECTION('',(0.,0.,1.))");
+            const xdir = add("DIRECTION('',(1.,0.,0.))");
+            const placement = add(`AXIS2_PLACEMENT_3D('',#${origin},#${zdir},#${xdir})`);
+            const lu = add("( LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.) )");
+            const au = add("( NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.) )");
+            const su = add("( NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) PLANE_ANGLE_UNIT() )");
+            const unc = add(`UNCERTAINTY_MEASURE_WITH_UNIT(LENGTH_MEASURE(1.E-07),#${lu},'distance_accuracy_value','confusion accuracy')`);
+            const ctx = add(`( GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNCERTAINTY_ASSIGNED_CONTEXT((#${unc})) GLOBAL_UNIT_ASSIGNED_CONTEXT((#${lu},#${au},#${su})) REPRESENTATION_CONTEXT('','3D Context with UNIT and UNCERTAINTY') )`);
+            const brep = add(`ADVANCED_BREP_SHAPE_REPRESENTATION('',(#${placement},${solids.map((s) => "#" + s).join(",")}),#${ctx})`);
+            const appCtx = add("APPLICATION_CONTEXT('core data for automotive mechanical design processes')");
+            const prodCtx = add(`PRODUCT_DEFINITION_CONTEXT('part definition',#${appCtx},'design')`);
+            const mech = add(`MECHANICAL_CONTEXT('',#${appCtx},'mechanical')`);
+            const prod = add("PRODUCT('eda_board_assembly','eda_board_assembly','',(#" + mech + "))");
+            const form = add(`PRODUCT_DEFINITION_FORMATION('','',#${prod})`);
+            const def = add(`PRODUCT_DEFINITION('design','',#${form},#${prodCtx})`);
+            const defShape = add(`PRODUCT_DEFINITION_SHAPE('','',#${def})`);
+            add(`SHAPE_DEFINITION_REPRESENTATION(#${defShape},#${brep})`);
+            return "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('EDA board assembly'),'2;1');\nFILE_NAME('board.step','2026-11-09T00:00:00',('eda-multiagent-core'),('eda-multiagent-core'),'cad_viewer_v2.html','eda-multiagent-core','');\nFILE_SCHEMA(('AUTOMOTIVE_DESIGN { 1 0 10303 214 1 1 1 1 }'));\nENDSEC;\nDATA;\n"
+                + lines.join("\n") + "\nEND-ISO-10303-21;\n";
+        }
+
+        // ---------- Export-Buttons ----------
+        const EXPORT_NAMES = { kicad: "board.kicad_pcb", step: "board.step", scad: "case.scad" };
+        const EXPORT_BUILDERS = { kicad: buildKicad, step: buildStep, scad: buildScad };
+        function triggerExport(kind) {
+            if (!currentBoard) { setWsState("kein Board geladen", "#f85149"); return; }
+            const content = EXPORT_BUILDERS[kind](currentBoard);
+            const bytes = Array.from(new TextEncoder().encode(content));
+            if (IS_TAURI) {
+                window.__TAURI__.core.invoke("export_file_dialog", {
+                    filename: EXPORT_NAMES[kind], content: bytes,
+                }).then((ok) => setWsState(ok ? "exportiert: " + EXPORT_NAMES[kind] : "Dialog abgebrochen",
+                                           ok ? "#3fb950" : "#e3b341"))
+                  .catch((err) => setWsState("Export-Fehler: " + err, "#f85149"));
+            } else {
+                const blob = new Blob([content], { type: "text/plain" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = EXPORT_NAMES[kind];
+                a.click();
+                URL.revokeObjectURL(a.href);
+                setWsState("Download gestartet: " + EXPORT_NAMES[kind], "#3fb950");
+            }
+        }
+
+        // ---------- WebSocket (nur Browser-Modus) ----------
+        const WS_URL = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/cad";
+        let ws = null;
+
+        function requestBoard() {
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send("{}");
+        }
+        function connect() {
+            setWsState("verbinde\u2026", "#e3b341");
+            ws = new WebSocket(WS_URL);
+            ws.onopen = () => { setWsState("verbunden", "#3fb950"); requestBoard(); };
+            ws.onmessage = (ev) => {
+                const msg = JSON.parse(ev.data);
+                renderBoard(msg.board, msg.report);
+            };
+            ws.onclose = () => {
+                setWsState("getrennt \u2014 neuer Versuch in 2 s", "#f85149");
+                setTimeout(connect, 2000);
+            };
+            ws.onerror = () => ws.close();
+        }
+
+        // ---------- Moduswahl ----------
+        document.getElementById("expKicad").addEventListener("click", () => triggerExport("kicad"));
+        document.getElementById("expStep").addEventListener("click", () => triggerExport("step"));
+        document.getElementById("expScad").addEventListener("click", () => triggerExport("scad"));
+        if (IS_TAURI) {
+            document.body.classList.add("tauri");
+            document.getElementById("menubar").style.display = "flex";
+            document.getElementById("mode").textContent = "Desktop (native IPC, Rust-A*)";
+            tauriRoute();
+        } else {
+            document.getElementById("menubar").style.display = "flex";
+            document.getElementById("mode").textContent = "Browser (WebSocket)";
+            connect();
+        }
+
+        // ---------- Render-Loop ----------
+        window.addEventListener("resize", () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        (function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+            const dc = document.getElementById("drawCalls");
+            if (dc) dc.textContent = renderer.info.render.calls;
+        })();
+    </script>
+</body>
+</html>

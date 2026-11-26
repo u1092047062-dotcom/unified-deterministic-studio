@@ -1,0 +1,39 @@
+# Python
+venv/
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+
+# Rust / Node / Build artifacts
+target/
+node_modules/
+dist/
+build/
+
+# Secrets & local configuration (fail-closed)
+.env
+.env.*
+!.env.example
+*telegrambottoken*
+credentials.json
+secrets.json
+
+# Logs, backups, verification reports
+*.log
+logs/
+*.bak
+*.backup*
+deployment_backups/
+verification/
+_backups/
+
+# Archives & Windows binaries / dumps
+*.zip
+*.rar
+*.dmp
+*.exe
+*.dll
+*.pdb

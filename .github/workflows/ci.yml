@@ -1,0 +1,65 @@
+name: Unified Platform CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  platform-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install pytest
+      - run: python -m pytest packages/platform_core/tests -v
+
+  eda-multiagent-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r apps/eda-multiagent-core/requirements.txt
+      - run: python -m pytest -v
+        working-directory: apps/eda-multiagent-core
+
+  art-restoration-ai:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e "apps/art-restoration-ai[dev]"
+      - run: python -m pytest -v
+        working-directory: apps/art-restoration-ai
+
+  rust-core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+        working-directory: apps/eda-multiagent-core/rust_core
+      - run: cargo test --no-default-features --locked
+        working-directory: apps/eda-multiagent-core/rust_core
+
+  terra-remote-engine:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --all -- --check
+        working-directory: services/terra-remote-engine
+      - run: cargo test --all-targets --locked
+        working-directory: services/terra-remote-engine
+      - run: cargo clippy --all-targets --locked -- -D warnings
+        working-directory: services/terra-remote-engine

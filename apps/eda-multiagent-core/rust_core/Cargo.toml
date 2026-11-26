@@ -1,0 +1,22 @@
+[package]
+name = "core_fast"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "core_fast"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["python"]
+# PyO3-Bindings nur für den Python-Modul-Build (maturin); die Tauri-App
+# linkt das Crate mit default-features = false (reines Rust, kein libpython).
+python = ["dep:pyo3"]
+
+[dependencies]
+pyo3 = { version = "0.23", optional = true, features = ["abi3-py38"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

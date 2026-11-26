@@ -1,0 +1,36 @@
+[package]
+name = "rust-pc-remote"
+version = "1.2.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.40", features = ["full"] }
+teloxide = { version = "0.13", features = ["macros"] }
+dotenvy = "0.15"
+log = "0.4"
+simplelog = "0.12"
+windows-service = "0.7.0"
+chrono = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+windows-sys = { version = "0.59", features = [
+    "Win32_System_Shutdown",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Graphics",
+    "Win32_Graphics_Gdi",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_System_Power",
+    "Win32_System_SystemInformation",
+    "Win32_System_ProcessStatus"
+] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

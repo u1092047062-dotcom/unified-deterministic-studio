@@ -1,0 +1,10 @@
+{
+    "$schema": "../gen/schemas/desktop-schema.json",
+    "identifier": "default",
+    "description": "Standard-Fenster: Kern-IPC und native Dateidialoge (Export von .kicad_pcb, .step, .scad, BOM/CPL CSVs)",
+    "windows": ["main"],
+    "permissions": [
+        "core:default",
+        "dialog:default"
+    ]
+}

@@ -1,0 +1,21 @@
+[package]
+name = "eda-cad-studio"
+version = "1.0.0"
+edition = "2021"
+description = "EDA Multi-Agent CAD Studio - Desktop-Shell"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+# Lokaler Rust-Core (A*-Innerloop) ohne PyO3/libpython:
+core_fast = { path = "../rust_core", default-features = false }
+
+[[bin]]
+name = "eda-cad-studio"
+path = "src/main.rs"
