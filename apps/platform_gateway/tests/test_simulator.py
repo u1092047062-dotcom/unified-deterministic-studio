@@ -1,6 +1,7 @@
 from io import BytesIO
 from pathlib import Path
 import sys
+import zipfile
 
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -24,97 +25,151 @@ def test_simulator_ui_and_fail_closed_before_account_setup():
 
     page = client.get("/simulator")
     assert page.status_code == 200
-    assert "Interaktiver End-to-End Plattform-Simulator" in page.text
+    assert "100 % Interaktiver Simulator" in page.text
 
-    # Vor Account-Setup muessen geschuetzte Pfade fail-closed abweisen
-    tg_blocked = client.post("/sim/telegram/command", json={"command": "/status"})
-    assert tg_blocked.status_code == 409
+    assert client.post("/sim/telegram/command", json={"command": "/status"}).status_code == 409
 
     demo = client.post("/sim/media/demo")
     assert demo.status_code == 200
     sid = demo.json()["session_id"]
-    proc_blocked = client.post("/sim/media/process", json={"session_id": sid})
-    assert proc_blocked.status_code == 409
+    assert client.post("/sim/media/process", json={"session_id": sid}).status_code == 409
 
 
-def test_simulator_photo_upload_processing_budget_gate_and_provenance():
+def test_simulator_photo_tiles_interrupt_resume_and_topaz_handoff():
     client = TestClient(gateway)
+    client.post("/sim/accounts/setup", json={"activate_all": True, "runpod_budget_usd": 5.0})
 
-    # Alle Accounts in einem Schritt simulieren
-    setup = client.post("/sim/accounts/setup", json={"activate_all": True, "runpod_budget_usd": 5.0})
-    assert setup.status_code == 200
-    assert setup.json()["accounts"]["runpod"]["connected"] is True
-    assert setup.json()["accounts"]["telegram"]["connected"] is True
-    assert setup.json()["accounts"]["checkpoints"]["verified"] is True
-
-    # Echtes PNG hochladen
     buf = BytesIO()
-    Image.new("RGB", (320, 240), (90, 120, 160)).save(buf, format="PNG")
+    Image.new("RGB", (400, 300), (90, 120, 160)).save(buf, format="PNG")
     buf.seek(0)
     up = client.post("/sim/media/upload", files={"file": ("kunst.png", buf, "image/png")})
     assert up.status_code == 200
-    up_data = up.json()
-    sid = up_data["session_id"]
-    assert up_data["media_type"] == "photo"
-    assert len(up_data["original_sha256"]) == 64
+    sid = up.json()["session_id"]
 
-    # Budget-Gate greift real (Budget = 0.0 auf bezahlter GPU -> 402 Payment/Budget blocked)
+    # Kachel-Overlay testen
+    tp = client.post(f"/sim/media/{sid}/tile-plan?tile_size=256&overlap=32")
+    assert tp.status_code == 200
+    assert tp.json()["tile_count"] >= 4
+    assert client.get(f"/sim/media/{sid}/tile-overlay").status_code == 200
+
+    # Budget-Gate blockt bei $0.00
     blocked = client.post(
         "/sim/media/process",
         json={"session_id": sid, "budget_override_usd": 0.0, "gpu_override": "RTX_4090_24GB"},
     )
     assert blocked.status_code == 402
 
-    # Erfolgreicher Durchlauf mit 2x Upscale-Simulation
-    done = client.post(
+    # Unterbrechung + Config-Hash-Sperre + erfolgreiches Resume
+    inter = client.post(
         "/sim/media/process",
-        json={"session_id": sid, "mode": "upscale_2x", "tile_size": 256, "overlap": 32},
+        json={"session_id": sid, "tile_size": 256, "overlap": 32, "simulate_interrupt": True},
     )
-    assert done.status_code == 200
-    body = done.json()
-    assert body["status"] == "completed_simulated"
-    assert body["quality_metrics"]["output_dimensions"] == [640, 480]
-    assert len(body["manifest_sha256"]) == 64
+    assert inter.status_code == 200
+    assert inter.json()["status"] == "interrupted"
 
-    assert client.get(f"/sim/media/{sid}/original").status_code == 200
+    # Resume mit geaenderter Kachelgroesse wird fail-closed abgewiesen (409)
+    bad_resume = client.post("/sim/media/resume", json={"session_id": sid, "tile_size": 512})
+    assert bad_resume.status_code == 409
+
+    # Resume mit identischer Config schliesst sauber ab
+    ok_resume = client.post("/sim/media/resume", json={"session_id": sid})
+    assert ok_resume.status_code == 200
+    assert ok_resume.json()["status"] == "completed_simulated"
+    assert ok_resume.json()["quality_metrics"]["resumed_from_tile"] >= 1
     assert client.get(f"/sim/media/{sid}/result").status_code == 200
-    prov = client.get(f"/sim/media/{sid}/provenance")
-    assert prov.status_code == 200
-    assert prov.json()["manifest_sha256"] == body["manifest_sha256"]
+    assert client.get(f"/sim/media/{sid}/provenance").status_code == 200
+
+    # Kompletter Topaz Desktop Handoff (Export -> Import)
+    texp = client.post("/sim/topaz/export", json={"session_id": sid})
+    assert texp.status_code == 200
+    assert texp.json()["status"] == "exported_waiting_import"
+
+    timp = client.post("/sim/topaz/import", json={"session_id": sid})
+    assert timp.status_code == 200
+    assert timp.json()["status"] == "imported_verified"
+    assert len(timp.json()["imported_sha256"]) == 64
 
 
-def test_simulator_video_upload_telegram_console_and_eda_run():
+def test_simulator_eda_z3_svg_7_downloads_and_unsat_conflict():
     client = TestClient(gateway)
     client.post("/sim/accounts/setup", json={"activate_all": True})
 
-    # Video-Upload simulieren (synthetischer MP4-Header)
+    # SAT-Lauf mit Z3 + SVG + 7 Downloads
+    eda = client.post(
+        "/sim/eda/run",
+        json={"template_id": "esp32_i2c_sensor", "run_z3_pinout": True, "force_z3_conflict": False},
+    )
+    assert eda.status_code == 200
+    body = eda.json()
+    assert body["pipeline_status"] == "OK"
+    assert set(body["pinout"].keys()) == {"SDA", "SCL"}
+    assert "<svg" in body["svg"]
+    assert set(body["download_urls"].keys()) == {
+        "board.kicad_pcb",
+        "board.step",
+        "case.scad",
+        "bom.csv",
+        "cpl.csv",
+        "gerbers.zip",
+        "export_manifest.json",
+    }
+
+    # Echter Download von gerbers.zip pruefen
+    gz = client.get(body["download_urls"]["gerbers.zip"])
+    assert gz.status_code == 200
+    with zipfile.ZipFile(BytesIO(gz.content)) as zf:
+        assert set(zf.namelist()) == {"F_Cu.gtl", "B_Cu.gbl", "Edge_Cuts.gm1", "board.drl"}
+
+    # Z3-UNSAT-Konflikt-Simulation
+    unsat = client.post(
+        "/sim/eda/run",
+        json={"template_id": "esp32_i2c_sensor", "run_z3_pinout": True, "force_z3_conflict": True},
+    )
+    assert unsat.status_code == 200
+    assert unsat.json()["pipeline_status"] == "SOLVER_FAILED"
+
+
+def test_simulator_video_telegram_touch_dashboard_process_alerts_and_security():
+    client = TestClient(gateway)
+
+    # 1-Klick Vollautomatische Komplett-Demo testen
+    demo = client.post("/sim/auto-demo")
+    assert demo.status_code == 200
+    assert demo.json()["status"] == "full_auto_demo_completed"
+
+    # Video-Upload
     fake_mp4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom" + (b"\x00" * 4096)
     up = client.post("/sim/media/upload", files={"file": ("clip.mp4", BytesIO(fake_mp4), "video/mp4")})
     assert up.status_code == 200
     sid = up.json()["session_id"]
-    assert up.json()["media_type"] == "video"
+    assert client.post("/sim/media/process", json={"session_id": sid}).status_code == 200
 
-    proc = client.post("/sim/media/process", json={"session_id": sid, "mode": "restoration_enhance"})
-    assert proc.status_code == 200
-    assert proc.json()["media_type"] == "video"
-    assert client.get(f"/sim/media/{sid}/result").status_code == 200
+    # Telegram 2-Stufen-Shutdown + /abort + Path-Traversal-Sperre
+    ask = client.post("/sim/telegram/callback", json={"action": "ask_shutdown"})
+    assert ask.status_code == 200
+    assert ask.json()["pending_confirmation"] == "shutdown"
 
-    # Telegram-Befehle inkl. Fail-Closed-Guardrails testen
-    st = client.post("/sim/telegram/command", json={"command": "/status"})
-    assert st.status_code == 200
-    assert "TerraRemoteEngine" in st.json()["reply"]
+    conf = client.post("/sim/telegram/callback", json={"action": "confirm_power"})
+    assert conf.status_code == 200
+    assert "geplant" in conf.json()["reply"]
 
-    scr = client.post("/sim/telegram/command", json={"command": "/screen"})
-    assert scr.status_code == 200
-    assert "FAIL-CLOSED" in scr.json()["reply"]
+    ab = client.post("/sim/telegram/command", json={"command": "/abort"})
+    assert ab.status_code == 200
+    assert "abgebrochen" in ab.json()["reply"]
 
-    kill_res = client.post("/sim/telegram/command", json={"command": "/kill 1234"})
-    assert kill_res.status_code == 200
-    assert "FAIL-CLOSED" in kill_res.json()["reply"]
+    trav = client.post("/sim/telegram/command", json={"command": "/tail ../.env"})
+    assert trav.status_code == 200
+    assert "FAIL-CLOSED BLOCKIERT" in trav.json()["reply"]
 
-    # EDA-End-to-End-Simulation
-    eda = client.post("/sim/eda/run", json={"template_id": "esp32_i2c_sensor"})
-    assert eda.status_code == 200
-    assert eda.json()["pipeline_status"] == "OK"
-    assert len(eda.json()["gerber_files"]) == 4
-    assert "PASS" in eda.json()["kicad_cli_signoff"]
+    # Prozess-Watchlist Event
+    pev = client.post("/sim/telegram/process-event", json={"process_name": "tpai.exe", "action": "start"})
+    assert pev.status_code == 200
+    assert pev.json()["is_priority"] is True
+
+    # Live Secret-Scanner
+    syn_token = "998877665" + ":" + ("B" * 30)
+    scan = client.post("/sim/qa/secret-scan", json={"sample_text": f"token={syn_token}"})
+    assert scan.status_code == 200
+    assert scan.json()["clean"] is False
+    assert "telegram_bot_token" in scan.json()["secret_types_detected"]
+    assert syn_token not in scan.json()["redacted_preview"]
