@@ -14,6 +14,19 @@ from platform_core.c2pa_credentials import (
     read_png_content_credentials,
     verify_png_content_credentials,
 )
+from platform_core.crypto_signing import (
+    build_transparency_bundle,
+    detect_hardware_trust_providers,
+    ed25519_public_key,
+    embed_signed_png_c2pa,
+    generate_ed25519_keypair,
+    sign_ed25519,
+    sign_manifest_ed25519,
+    verify_ed25519,
+    verify_manifest_ed25519,
+    verify_signed_png_c2pa,
+    verify_transparency_bundle,
+)
 from platform_core.durable_workflow import (
     BudgetCircuitBreakerError,
     ConfigMismatchError,

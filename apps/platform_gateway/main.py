@@ -30,7 +30,9 @@ for extra_path in (
     if extra_path.is_dir() and p_str not in sys.path:
         sys.path.insert(0, p_str)
 
-from fastapi import Body, HTTPException
+from fastapi import Body, File, HTTPException, UploadFile
+from platform_core.c2pa_credentials import detect_c2pa_backend
+from platform_core.crypto_signing import detect_hardware_trust_providers, verify_signed_png_c2pa
 from platform_core.durable_workflow import DurableWorkflowEngine
 from platform_core.otel_tracing import PlatformTracer
 from platform_core.resource_guard import plan_resources
@@ -165,6 +167,22 @@ def get_durable_workflow(workflow_id: str) -> JSONResponse:
 @gateway.get("/telemetry/traces")
 def get_recent_traces(limit: int = 30) -> JSONResponse:
     return JSONResponse(content={"spans": PlatformTracer.read_recent_spans(_trace_log_path(), limit=limit)})
+
+
+@gateway.get("/trust/status")
+def trust_status() -> JSONResponse:
+    return JSONResponse(
+        content={
+            "c2pa": detect_c2pa_backend(),
+            "hardware_trust": detect_hardware_trust_providers(),
+        }
+    )
+
+
+@gateway.post("/trust/verify")
+async def trust_verify_png(file: UploadFile = File(...)) -> JSONResponse:
+    raw = await file.read()
+    return JSONResponse(content=verify_signed_png_c2pa(raw))
 
 
 if __name__ == "__main__":
