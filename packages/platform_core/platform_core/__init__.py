@@ -14,7 +14,19 @@ from platform_core.c2pa_credentials import (
     read_png_content_credentials,
     verify_png_content_credentials,
 )
+from platform_core.durable_workflow import (
+    BudgetCircuitBreakerError,
+    ConfigMismatchError,
+    DurableWorkflowEngine,
+)
 from platform_core.job_store import JobStore, atomic_write_json, compute_config_hash
+from platform_core.otel_tracing import (
+    PlatformTracer,
+    format_traceparent,
+    new_span_id,
+    new_trace_id,
+    parse_traceparent,
+)
 from platform_core.provenance import (
     MANIFEST_SCHEMA_VERSION,
     build_provenance_manifest,
@@ -32,10 +44,14 @@ from platform_core.security import scan_text_for_secrets, validate_safe_path
 from platform_core.telemetry import PlatformTelemetryLogger, sanitize_payload
 
 __all__ = [
+    "BudgetCircuitBreakerError",
     "C2PA_SCHEMA_VERSION",
+    "ConfigMismatchError",
+    "DurableWorkflowEngine",
     "MANIFEST_SCHEMA_VERSION",
     "JobStore",
     "PlatformTelemetryLogger",
+    "PlatformTracer",
     "ResourcePlan",
     "atomic_write_json",
     "build_c2pa_manifest",
@@ -46,6 +62,10 @@ __all__ = [
     "embed_png_content_credentials",
     "enforce_budget_gate",
     "estimate_compute_cost",
+    "format_traceparent",
+    "new_span_id",
+    "new_trace_id",
+    "parse_traceparent",
     "plan_resources",
     "read_png_content_credentials",
     "sanitize_payload",

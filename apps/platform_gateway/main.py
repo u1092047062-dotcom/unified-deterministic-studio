@@ -30,7 +30,9 @@ for extra_path in (
     if extra_path.is_dir() and p_str not in sys.path:
         sys.path.insert(0, p_str)
 
-from fastapi import Body
+from fastapi import Body, HTTPException
+from platform_core.durable_workflow import DurableWorkflowEngine
+from platform_core.otel_tracing import PlatformTracer
 from platform_core.resource_guard import plan_resources
 from platform_core.telemetry import sanitize_payload
 from platform_mcp.server import handle_jsonrpc_request, list_mcp_tools
@@ -136,6 +138,33 @@ def mcp_tools_list() -> JSONResponse:
 @gateway.post("/mcp")
 def mcp_jsonrpc_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
     return JSONResponse(content=handle_jsonrpc_request(payload))
+
+
+def _workflow_engine() -> DurableWorkflowEngine:
+    db_path = Path(os.environ.get("PLATFORM_WORKFLOW_DB", str(REPO_ROOT / "logs" / "workflows.sqlite")))
+    return DurableWorkflowEngine(db_path)
+
+
+def _trace_log_path() -> Path:
+    return Path(os.environ.get("PLATFORM_OTEL_LOG", str(REPO_ROOT / "logs" / "otel_spans.jsonl")))
+
+
+@gateway.get("/workflows")
+def list_durable_workflows(limit: int = 25) -> JSONResponse:
+    return JSONResponse(content={"workflows": _workflow_engine().list_workflows(limit=limit)})
+
+
+@gateway.get("/workflows/{workflow_id}")
+def get_durable_workflow(workflow_id: str) -> JSONResponse:
+    try:
+        return JSONResponse(content=_workflow_engine().get_workflow(workflow_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@gateway.get("/telemetry/traces")
+def get_recent_traces(limit: int = 30) -> JSONResponse:
+    return JSONResponse(content={"spans": PlatformTracer.read_recent_spans(_trace_log_path(), limit=limit)})
 
 
 if __name__ == "__main__":
