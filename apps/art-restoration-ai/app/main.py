@@ -27,7 +27,10 @@ from app.telemetry import record_art_event
 from app.topaz import create_topaz_handoff, import_topaz_result, detect_topaz_installations
 from app.cloud import cloud_status
 from restoration.checkpoints import inspect_checkpoints_dir
+from restoration.color_pipeline import detect_color_management_backends
 from restoration.engine import RestorationEngine
+from restoration.hallucination_gate import evaluate_tile_fidelity
+from restoration.sota_router import select_sota_restoration_plan
 from restoration.spandrel_adapter import spandrel_runtime_status
 from restoration.streaming_io import detect_streaming_backend
 from restoration.tiling import plan_tiles
@@ -355,6 +358,54 @@ def io_backend_status():
 def c2pa_status():
     """Liefert den Status des C2PA Content-Credentials-Backends."""
     return detect_c2pa_backend()
+
+
+@app.get("/color/status")
+def color_pipeline_status():
+    """Liefert den Status der 32-Bit-Linear-ACEScg/OCIO-Farb-Pipeline."""
+    return detect_color_management_backends()
+
+
+class SotaRouteRequest(BaseModel):
+    quality_profile: str = Field(default="museum_fidelity")
+    media_type: str = Field(default="photo")
+    vram_gb: float = Field(default=24.0, ge=0.0, le=512.0)
+    damage_level: str = Field(default="moderate")
+    allow_generative: bool = False
+
+
+@app.post("/sota/route")
+def route_sota_model(req: SotaRouteRequest):
+    """Waehlt deterministisch den SOTA-Restaurierungspfad (NAFNet/HAT vs. SeedVR2/SUPIR)."""
+    return select_sota_restoration_plan(
+        quality_profile=req.quality_profile,
+        media_type=req.media_type,
+        vram_gb=req.vram_gb,
+        damage_level=req.damage_level,
+        allow_generative=req.allow_generative,
+    )
+
+
+@app.post("/qc/hallucination-gate")
+async def qc_hallucination_gate(
+    original: UploadFile = File(...),
+    restored: UploadFile = File(...),
+    min_ssim: float = 0.85,
+    max_edge_drift: float = 0.25,
+):
+    """Prueft ein Original/Restauriert-Bildpaar deterministisch im Hallucination-Delta-Gate."""
+    from io import BytesIO
+    import numpy as np
+    from PIL import Image
+
+    orig_img = Image.open(BytesIO(await original.read())).convert("RGB")
+    rest_img = Image.open(BytesIO(await restored.read())).convert("RGB")
+    return evaluate_tile_fidelity(
+        np.asarray(orig_img),
+        np.asarray(rest_img),
+        min_ssim=min_ssim,
+        max_edge_drift=max_edge_drift,
+    )
 
 
 @app.post("/projects/{project_id}/c2pa/embed")
