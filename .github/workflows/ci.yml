@@ -38,6 +38,17 @@ jobs:
       - run: python -m pytest -v
         working-directory: apps/art-restoration-ai
 
+  platform-gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e packages/platform_core -r apps/eda-multiagent-core/requirements.txt -e "apps/art-restoration-ai[dev]"
+      - run: python -m pytest tests -v
+        working-directory: apps/platform_gateway
+
   rust-core:
     runs-on: ubuntu-latest
     steps:

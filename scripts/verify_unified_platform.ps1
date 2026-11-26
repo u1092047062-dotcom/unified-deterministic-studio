@@ -24,6 +24,7 @@ $ProgressPreference = 'SilentlyContinue'
 
 $PlatformRoot = Split-Path -Parent $PSScriptRoot
 $CorePkgRoot = Join-Path $PlatformRoot 'packages\platform_core'
+$GatewayRoot = Join-Path $PlatformRoot 'apps\platform_gateway'
 $EdaRoot = Join-Path $PlatformRoot 'apps\eda-multiagent-core'
 $ArtRoot = Join-Path $PlatformRoot 'apps\art-restoration-ai'
 $RustCoreRoot = Join-Path $EdaRoot 'rust_core'
@@ -208,6 +209,7 @@ try {
     Invoke-Step -Name '1. platform_core pytest' -WorkingDirectory $CorePkgRoot -FilePath $py -Arguments @('-m', 'pytest', 'tests', '-v') | Out-Null
     Invoke-Step -Name '2. eda-multiagent-core pytest' -WorkingDirectory $EdaRoot -FilePath $py -Arguments @('-m', 'pytest', '-v') | Out-Null
     Invoke-Step -Name '3. art-restoration-ai pytest' -WorkingDirectory $ArtRoot -FilePath $py -Arguments @('-m', 'pytest', '-v') | Out-Null
+    Invoke-Step -Name '3b. platform_gateway pytest' -WorkingDirectory $GatewayRoot -FilePath $py -Arguments @('-m', 'pytest', 'tests', '-v') | Out-Null
     Invoke-Step -Name '4a. rust_core cargo fmt --check' -WorkingDirectory $RustCoreRoot -FilePath 'cargo' -Arguments @('fmt', '--all', '--', '--check') | Out-Null
     Invoke-Step -Name '4b. rust_core cargo test' -WorkingDirectory $RustCoreRoot -FilePath 'cargo' -Arguments @('test', '--no-default-features', '--locked', '--jobs', [string]$CargoJobs) | Out-Null
     Invoke-Step -Name '5. src-tauri cargo test' -WorkingDirectory $TauriRoot -FilePath 'cargo' -Arguments @('test', '--locked', '--jobs', [string]$CargoJobs) | Out-Null

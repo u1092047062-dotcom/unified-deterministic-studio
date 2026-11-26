@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Unified Deterministic Studio – Cockpit</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --ok: #22c55e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 2rem;
+      line-height: 1.5;
+    }
+    header { max-width: 1100px; margin: 0 auto 2rem; display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    h1 { margin: 0; font-size: 1.6rem; }
+    .badge { background: rgba(34,197,94,0.15); color: var(--ok); border: 1px solid var(--ok); padding: 0.25rem 0.7rem; border-radius: 999px; font-size: 0.85rem; }
+    .grid { max-width: 1100px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 1.25rem; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; }
+    .card h2 { margin-top: 0; font-size: 1.15rem; color: var(--accent); }
+    .muted { color: var(--muted); font-size: 0.9rem; }
+    .actions { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 1rem; }
+    a.btn, button.btn {
+      background: #0284c7; color: #fff; text-decoration: none; border: none;
+      padding: 0.5rem 0.9rem; border-radius: 8px; cursor: pointer; font-size: 0.9rem;
+    }
+    a.btn.secondary { background: #334155; }
+    pre {
+      background: #020617; border: 1px solid var(--border); border-radius: 8px;
+      padding: 0.85rem; overflow: auto; font-size: 0.8rem; max-height: 240px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Unified Deterministic Studio</h1>
+      <div class="muted">Lokales Control-Hub (127.0.0.1) &middot; EDA Multi-Agent Core + ART Restoration AI + Platform Core</div>
+    </div>
+    <span class="badge" id="status-badge">Pruefe Status...</span>
+  </header>
+
+  <main class="grid">
+    <section class="card">
+      <h2>Hardware / PCB EDA Core</h2>
+      <p class="muted">Z3-Solver, Force-Directed Placer, Rust A*-Router, Spatial-DRC, KiCad v8, RS-274X Gerber &amp; Excellon, STEP, OpenSCAD, JLCPCB BOM/CPL.</p>
+      <div class="actions">
+        <a class="btn" href="/eda/" target="_blank">3D CAD Viewer</a>
+        <a class="btn secondary" href="/eda/docs" target="_blank">EDA API Docs</a>
+        <button class="btn" onclick="runEdaJob()">EDA-Job starten (SHA-256)</button>
+      </div>
+      <pre id="eda-output">Bereit fuer deterministischen EDA-Job...</pre>
+    </section>
+
+    <section class="card">
+      <h2>ART Restoration AI</h2>
+      <p class="muted">Quality-First Kachel-Orchestrierung, unveraenderliche Originale, SHA-256-Provenienz, Topaz-Desktop-Handoff &amp; Checkpoint-Verifier.</p>
+      <div class="actions">
+        <a class="btn" href="/art/docs" target="_blank">ART API Docs</a>
+        <a class="btn secondary" href="/art/capabilities" target="_blank">Capabilities JSON</a>
+        <a class="btn secondary" href="/art/checkpoints/status" target="_blank">Checkpoints</a>
+      </div>
+      <pre id="art-output">Lade ART-Status...</pre>
+    </section>
+
+    <section class="card">
+      <h2>Resource Guard &amp; Telemetrie</h2>
+      <p class="muted">Quality-First Hardware-Schutz (8 GB RAM, Cargo --jobs 2) &amp; rote Secret-freie JSONL-Telemetrie.</p>
+      <pre id="overview-output">Lade Plattform-Uebersicht...</pre>
+    </section>
+  </main>
+
+  <script>
+    async function loadOverview() {
+      try {
+        const res = await fetch('/api/overview');
+        const data = await res.json();
+        document.getElementById('status-badge').textContent = 'ONLINE (127.0.0.1)';
+        document.getElementById('overview-output').textContent = JSON.stringify(data.resource_plan, null, 2);
+        document.getElementById('art-output').textContent = JSON.stringify(data.art.checkpoints, null, 2);
+      } catch (err) {
+        document.getElementById('status-badge').textContent = 'OFFLINE';
+      }
+    }
+
+    async function runEdaJob() {
+      const out = document.getElementById('eda-output');
+      out.textContent = 'Starte atomaren EDA-Job...';
+      try {
+        const res = await fetch('/eda/jobs', { method: 'POST' });
+        const job = await res.json();
+        out.textContent = JSON.stringify({
+          job_id: job.job_id,
+          status: job.status,
+          pipeline_status: job.pipeline_status,
+          manifest_sha256: job.manifest_sha256,
+          board_summary: job.board_summary
+        }, null, 2);
+      } catch (err) {
+        out.textContent = 'Fehler: ' + err;
+      }
+    }
+
+    loadOverview();
+  </script>
+</body>
+</html>

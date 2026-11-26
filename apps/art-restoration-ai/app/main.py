@@ -5,14 +5,22 @@ from pydantic import BaseModel, Field
 from pathlib import Path
 import json
 import shutil
+import sys
 import time
 import uuid
+
+_PLATFORM_CORE = Path(__file__).resolve().parents[3] / "packages" / "platform_core"
+if _PLATFORM_CORE.is_dir() and str(_PLATFORM_CORE) not in sys.path:
+    sys.path.insert(0, str(_PLATFORM_CORE))
+
+from platform_core.provenance import build_provenance_manifest
 
 from app.config import DATA_DIR, WORK_DIR, MAX_UPLOAD_MB, ALLOWED_EXTENSIONS
 from app.storage import sha256_file, inspect_image
 from app.telemetry import record_art_event
 from app.topaz import create_topaz_handoff, import_topaz_result, detect_topaz_installations
 from app.cloud import cloud_status
+from restoration.checkpoints import inspect_checkpoints_dir
 from restoration.engine import RestorationEngine
 from restoration.tiling import plan_tiles
 from restoration.adapters import available_adapters, IdentityValidationAdapter
@@ -321,3 +329,42 @@ async def topaz_import(project_id: str, file: UploadFile = File(...), tool: str 
     except Exception as e:
         dest.unlink(missing_ok=True)
         raise HTTPException(400, f"Importprüfung fehlgeschlagen: {e}")
+
+
+@app.get("/checkpoints/status")
+def checkpoints_status():
+    """Liefert den Fail-Closed-Verifikationsstatus lokaler KI-Checkpoints."""
+    return inspect_checkpoints_dir()
+
+
+@app.get("/projects/{project_id}/provenance")
+def project_provenance(project_id: str):
+    """Erstellt ein deterministisches SHA-256-Provenienz-Manifest fuer ein ART-Projekt."""
+    project = project_dir(project_id)
+    artifacts: dict[str, bytes] = {}
+    for rel in ("project.json", "source_manifest.json"):
+        p = project / rel
+        if p.is_file():
+            artifacts[rel] = p.read_bytes()
+
+    jobs_dir = project / "jobs"
+    job_count = 0
+    if jobs_dir.is_dir():
+        for jf in sorted(jobs_dir.glob("*.json")):
+            artifacts[f"jobs/{jf.name}"] = jf.read_bytes()
+            job_count += 1
+
+    topaz_dir = project / "topaz"
+    if topaz_dir.is_dir():
+        for tf in sorted(topaz_dir.rglob("*.json")):
+            rel_key = tf.relative_to(project).as_posix()
+            artifacts[rel_key] = tf.read_bytes()
+
+    if not artifacts:
+        raise HTTPException(404, "Projekt enthaelt noch keine Provenienzdaten")
+
+    return build_provenance_manifest(
+        artifacts,
+        metadata={"project_id": project_id, "job_count": job_count},
+        domain="art-restoration-ai",
+    )

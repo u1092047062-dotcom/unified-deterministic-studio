@@ -16,7 +16,9 @@ from platform_core.resource_guard import plan_resources
 
 from core.schema import BoardState, Component, Net, Pin, PinType, Via
 from core.pipeline_v2 import DesignPipeline
+from core.board_synthesizer import DesignSpec, build_template_board, list_templates, synthesize_board
 from core.kicad_export import export_kicad_pcb
+from core.gerber_export import detect_kicad_cli, export_gerber_with_manifest
 from core.manufacturing_export import generate_jlcpcb_bom, generate_jlcpcb_cpl
 from core.step_export import generate_step
 from core.enclosure_gen import generate_openscad_case
@@ -66,9 +68,18 @@ async def websocket_endpoint(websocket: WebSocket):
     record_server_event("ws_cad_connect", status="CONNECTED")
     try:
         while True:
-            await websocket.receive_json()
+            payload = await websocket.receive_json()
             started = time.perf_counter()
-            result = PIPELINE.run(build_demo_board())
+            if isinstance(payload, dict) and payload.get("board"):
+                input_board = BoardState.model_validate(payload["board"])
+            elif isinstance(payload, dict) and payload.get("spec"):
+                input_board = synthesize_board(DesignSpec.model_validate(payload["spec"]))
+            elif isinstance(payload, dict) and payload.get("template"):
+                input_board = build_template_board(str(payload["template"]))
+            else:
+                input_board = build_demo_board()
+
+            result = PIPELINE.run(input_board)
             duration_ms = (time.perf_counter() - started) * 1000.0
             record_server_event(
                 "ws_cad_run",
@@ -219,10 +230,56 @@ def capabilities_endpoint(ram_gb: float = 8.0) -> JSONResponse:
             "service": "eda-multiagent-core",
             "policy": "deterministic-solvers; quality-first without DRC relaxation",
             "solvers": ["z3-pin-multiplex", "force-directed-placer", "pathfinder-astar", "spatial-hash-drc"],
-            "exporters": ["kicad-v8", "step-ap214", "openscad-enclosure", "jlcpcb-bom", "jlcpcb-cpl", "sha256-manifest"],
+            "exporters": ["kicad-v8", "rs274x-gerber", "excellon-drill", "step-ap214", "openscad-enclosure", "jlcpcb-bom", "jlcpcb-cpl", "sha256-manifest"],
+            "templates": [t["id"] for t in list_templates()],
+            "kicad_cli": detect_kicad_cli(),
             "resource_plan": resource_plan,
         }
     )
+
+
+@app.get("/templates")
+def list_templates_endpoint() -> JSONResponse:
+    return JSONResponse(content={"templates": list_templates()})
+
+
+@app.post("/design/synthesize")
+def synthesize_design_endpoint(spec: DesignSpec) -> JSONResponse:
+    """Synthetisiert ein DesignSpec deterministisch in BoardState + Pipeline-Lauf."""
+    started = time.perf_counter()
+    try:
+        board = synthesize_board(spec)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    result = PIPELINE.run(board)
+    record_server_event(
+        "design_synthesize",
+        status=result.status,
+        duration_ms=(time.perf_counter() - started) * 1000.0,
+        details={"name": spec.name, "drc_errors": len(result.board.errors)},
+    )
+    return JSONResponse(
+        content={
+            "status": result.status,
+            "attempts_used": result.attempts_used,
+            "report": result.report,
+            "board": result.board.model_dump(),
+        }
+    )
+
+
+@app.post("/export/gerber")
+def export_gerber_endpoint(board: Optional[BoardState] = Body(default=None)) -> JSONResponse:
+    """Exportiert RS-274X-Gerber-Layer (F_Cu, B_Cu, Edge_Cuts) + Excellon-Drill inkl. SHA-256-Manifest."""
+    started = time.perf_counter()
+    target_board = _assembly_board(board)
+    bundle = export_gerber_with_manifest(target_board)
+    record_server_event(
+        "export_gerber",
+        duration_ms=(time.perf_counter() - started) * 1000.0,
+        details={"manifest_sha256": bundle["manifest"]["manifest_sha256"]},
+    )
+    return JSONResponse(content=bundle)
 
 
 @app.post("/jobs")

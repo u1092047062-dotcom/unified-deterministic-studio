@@ -12,11 +12,15 @@ Konvergierte Engineering-Plattform, die die Architekturen, Qualitaets-Invariante
 unified-deterministic-studio/
 ├── packages/platform_core/         # Gemeinsamer Stdlib-Kern (Provenienz, Telemetrie, JobStore, ResourceGuard, Security)
 ├── apps/
-│   ├── eda-multiagent-core/        # Deterministische PCB-Pipeline + Rust core_fast + Tauri Desktop + /health, /capabilities, /jobs, /export/manifest
-│   └── art-restoration-ai/         # Quality-First Restaurierungs-Engine + Topaz-Handoff + strukturierte Telemetrie
+│   ├── platform_gateway/           # Lokales Control-Hub & Cockpit UI (127.0.0.1:8080, mountet /eda & /art)
+│   ├── eda-multiagent-core/        # Deterministische PCB-Pipeline + Synthesizer + RS-274X Gerber/Excellon + Rust core_fast + Tauri
+│   └── art-restoration-ai/         # Quality-First Restaurierungs-Engine + Checkpoint-Verifier + Projekt-Provenienz + Telemetrie
 ├── services/
 │   └── terra-remote-engine/        # Rust 1.2 Monitoring-Sidecar (EDA + ART Watchlist, /tail eda|art, /getlog eda|art)
 ├── scripts/
+│   ├── install_platform.ps1        # Ein-Klick-Setup fuer dedizierte lokale .venv
+│   ├── start_platform.ps1          # Lokaler Launcher (127.0.0.1) fuer Gateway, EDA oder ART
+│   ├── package_release.ps1         # Release-Build & SHA-256-Manifest-Erstellung (CARGO_BUILD_JOBS=2)
 │   ├── verify_unified_platform.ps1 # Fail-Closed End-to-End-Verifikation ueber alle Python- & Rust-Komponenten + Secret-Scan
 │   ├── check_platform_processes.ps1# Read-Only-Prozessdiagnose (EDA + ART + Terra + Topaz)
 │   └── collect_crash_report.ps1    # Read-Only WER-/Dump-/EventLog-Diagnose
