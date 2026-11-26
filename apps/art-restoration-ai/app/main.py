@@ -22,6 +22,8 @@ from app.topaz import create_topaz_handoff, import_topaz_result, detect_topaz_in
 from app.cloud import cloud_status
 from restoration.checkpoints import inspect_checkpoints_dir
 from restoration.engine import RestorationEngine
+from restoration.spandrel_adapter import spandrel_runtime_status
+from restoration.streaming_io import detect_streaming_backend
 from restoration.tiling import plan_tiles
 from restoration.adapters import available_adapters, IdentityValidationAdapter
 from restoration.model_registry import MODEL_REGISTRY
@@ -334,7 +336,13 @@ async def topaz_import(project_id: str, file: UploadFile = File(...), tool: str 
 @app.get("/checkpoints/status")
 def checkpoints_status():
     """Liefert den Fail-Closed-Verifikationsstatus lokaler KI-Checkpoints."""
-    return inspect_checkpoints_dir()
+    return {**inspect_checkpoints_dir(), "spandrel_runtime": spandrel_runtime_status()}
+
+
+@app.get("/io/backend")
+def io_backend_status():
+    """Liefert den Status des Streaming-Kachel-I/O-Backends (pyvips vs. pillow-bounded)."""
+    return detect_streaming_backend()
 
 
 @app.get("/projects/{project_id}/provenance")

@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse
 REPO_ROOT = Path(__file__).resolve().parents[2]
 for extra_path in (
     REPO_ROOT / "packages" / "platform_core",
+    REPO_ROOT / "packages" / "platform_mcp",
     REPO_ROOT / "apps" / "eda-multiagent-core",
     REPO_ROOT / "apps" / "art-restoration-ai",
 ):
@@ -29,8 +30,10 @@ for extra_path in (
     if extra_path.is_dir() and p_str not in sys.path:
         sys.path.insert(0, p_str)
 
+from fastapi import Body
 from platform_core.resource_guard import plan_resources
 from platform_core.telemetry import sanitize_payload
+from platform_mcp.server import handle_jsonrpc_request, list_mcp_tools
 
 from core.board_synthesizer import list_templates
 from core.gerber_export import detect_kicad_cli
@@ -123,6 +126,16 @@ def cockpit_index() -> FileResponse:
 @gateway.get("/simulator", include_in_schema=False)
 def simulator_ui() -> FileResponse:
     return FileResponse(STATIC_DIR / "simulator.html")
+
+
+@gateway.get("/mcp/tools")
+def mcp_tools_list() -> JSONResponse:
+    return JSONResponse(content={"tools": list_mcp_tools()})
+
+
+@gateway.post("/mcp")
+def mcp_jsonrpc_endpoint(payload: Dict[str, Any] = Body(...)) -> JSONResponse:
+    return JSONResponse(content=handle_jsonrpc_request(payload))
 
 
 if __name__ == "__main__":

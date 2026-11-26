@@ -24,6 +24,7 @@ $ProgressPreference = 'SilentlyContinue'
 
 $PlatformRoot = Split-Path -Parent $PSScriptRoot
 $CorePkgRoot = Join-Path $PlatformRoot 'packages\platform_core'
+$McpPkgRoot = Join-Path $PlatformRoot 'packages\platform_mcp'
 $GatewayRoot = Join-Path $PlatformRoot 'apps\platform_gateway'
 $EdaRoot = Join-Path $PlatformRoot 'apps\eda-multiagent-core'
 $ArtRoot = Join-Path $PlatformRoot 'apps\art-restoration-ai'
@@ -194,7 +195,7 @@ try {
     $env:CARGO_TARGET_DIR = $CargoTargetDir
     $env:CARGO_BUILD_JOBS = [string]$CargoJobs
     $extraSite = Join-Path $PlatformRoot '.venv\site-packages'
-    $pyPaths = @($CorePkgRoot)
+    $pyPaths = @($CorePkgRoot, $McpPkgRoot)
     if (Test-Path -LiteralPath $extraSite -PathType Container) { $pyPaths += $extraSite }
     if (-not [string]::IsNullOrWhiteSpace($oldPyPath)) { $pyPaths += $oldPyPath }
     $env:PYTHONPATH = ($pyPaths -join ';')
@@ -207,6 +208,7 @@ try {
     Write-Log -Message "CARGO_BUILD_JOBS: $($env:CARGO_BUILD_JOBS)"
 
     Invoke-Step -Name '1. platform_core pytest' -WorkingDirectory $CorePkgRoot -FilePath $py -Arguments @('-m', 'pytest', 'tests', '-v') | Out-Null
+    Invoke-Step -Name '1b. platform_mcp pytest' -WorkingDirectory $McpPkgRoot -FilePath $py -Arguments @('-m', 'pytest', 'tests', '-v') | Out-Null
     Invoke-Step -Name '2. eda-multiagent-core pytest' -WorkingDirectory $EdaRoot -FilePath $py -Arguments @('-m', 'pytest', '-v') | Out-Null
     Invoke-Step -Name '3. art-restoration-ai pytest' -WorkingDirectory $ArtRoot -FilePath $py -Arguments @('-m', 'pytest', '-v') | Out-Null
     Invoke-Step -Name '3b. platform_gateway pytest' -WorkingDirectory $GatewayRoot -FilePath $py -Arguments @('-m', 'pytest', 'tests', '-v') | Out-Null

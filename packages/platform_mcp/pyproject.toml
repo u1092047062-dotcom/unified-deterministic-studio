@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "platform-mcp"
+version = "1.0.0"
+description = "Native Model Context Protocol (MCP) JSON-RPC 2.0 server exposing deterministic EDA, ART, and Security tools"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["platform_mcp*"]

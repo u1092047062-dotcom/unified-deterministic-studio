@@ -45,9 +45,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -e packages/platform_core -r apps/eda-multiagent-core/requirements.txt -e "apps/art-restoration-ai[dev]"
-      - run: python -m pytest tests -v
-        working-directory: apps/platform_gateway
+      - run: pip install -e packages/platform_core -e packages/platform_mcp -r apps/eda-multiagent-core/requirements.txt -e "apps/art-restoration-ai[dev]"
+      - run: python -m pytest packages/platform_mcp/tests apps/platform_gateway/tests -v
 
   rust-core:
     runs-on: ubuntu-latest
