@@ -25,6 +25,9 @@ from core.manufacturing_export import generate_jlcpcb_bom, generate_jlcpcb_cpl
 from core.step_export import generate_step
 from core.enclosure_gen import generate_openscad_case
 from core.cad_enclosure_v2 import EnclosureParams, generate_build123d_script, validate_enclosure_geometry
+from core.em_thermal_sim import generate_openems_fdtd_script, simulate_board_physics
+from core.hardware_as_code import compile_hac_to_board
+from core.kicad9_ipc import build_kicad9_ipc_sync_payload, detect_kicad9_ipc
 from core.panelizer import PanelConfig, panelize_board
 from core.export_manifest import build_export_manifest, summarize_board
 from core.job_runner import EDAJobRunner
@@ -348,6 +351,50 @@ def validate_enclosure_endpoint(
     if include_build123d_script:
         report["build123d_script"] = generate_build123d_script(target_board, params)
     return JSONResponse(content=report)
+
+
+@app.post("/design/compile-hac")
+def compile_hac_endpoint(payload: dict = Body(...)) -> JSONResponse:
+    """Kompiliert Hardware-as-Code (Text-Source) nach formalem Z3-Elektrik-Beweis in BoardState."""
+    source = str(payload.get("source", ""))
+    if not source.strip():
+        raise HTTPException(status_code=422, detail="Feld 'source' (HAC-Quellcode) darf nicht leer sein")
+    try:
+        res = compile_hac_to_board(source)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    if not res["compiled"]:
+        return JSONResponse(status_code=409, content={"compiled": False, "proof": res["proof"]})
+    return JSONResponse(
+        content={"compiled": True, "proof": res["proof"], "board": res["board"].model_dump()}
+    )
+
+
+@app.post("/simulate/physics")
+def simulate_physics_endpoint(
+    copper_oz: float = 1.0,
+    ambient_c: float = 25.0,
+    include_openems_script: bool = False,
+    board: Optional[BoardState] = Body(default=None),
+) -> JSONResponse:
+    """Fuehrt IPC-2152-Thermik-, IR-Drop-, Crosstalk- & S-Parameter-Pre-Signoff durch."""
+    target_board = _assembly_board(board)
+    report = simulate_board_physics(target_board, copper_oz=copper_oz, ambient_c=ambient_c)
+    if include_openems_script:
+        report["openems_script"] = generate_openems_fdtd_script(target_board)
+    return JSONResponse(content=report)
+
+
+@app.get("/kicad9/ipc/status")
+def kicad9_ipc_status_endpoint() -> JSONResponse:
+    """Liefert den Status der KiCad-9-IPC-API-Bridge inkl. Beispiel-Sync-Payload."""
+    target_board = _assembly_board(None)
+    return JSONResponse(
+        content={
+            "ipc": detect_kicad9_ipc(),
+            "sync_preview": build_kicad9_ipc_sync_payload(target_board),
+        }
+    )
 
 
 @app.post("/jobs")
