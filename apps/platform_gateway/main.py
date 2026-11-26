@@ -132,6 +132,11 @@ def simulator_ui() -> FileResponse:
     return FileResponse(STATIC_DIR / "simulator.html")
 
 
+@gateway.get("/inspector", include_in_schema=False)
+def frontier_inspector_ui() -> FileResponse:
+    return FileResponse(STATIC_DIR / "frontier_inspector.html")
+
+
 @gateway.get("/mcp/tools")
 def mcp_tools_list() -> JSONResponse:
     return JSONResponse(content={"tools": list_mcp_tools()})

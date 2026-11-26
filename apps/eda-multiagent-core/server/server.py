@@ -24,6 +24,7 @@ from core.part_library import DEFAULT_LIBRARY
 from core.manufacturing_export import generate_jlcpcb_bom, generate_jlcpcb_cpl
 from core.step_export import generate_step
 from core.enclosure_gen import generate_openscad_case
+from core.assembly_collision_3d import check_3d_assembly_collisions
 from core.cad_enclosure_v2 import EnclosureParams, generate_build123d_script, validate_enclosure_geometry
 from core.em_thermal_sim import generate_openems_fdtd_script, simulate_board_physics
 from core.hardware_as_code import compile_hac_to_board
@@ -351,6 +352,18 @@ def validate_enclosure_endpoint(
     if include_build123d_script:
         report["build123d_script"] = generate_build123d_script(target_board, params)
     return JSONResponse(content=report)
+
+
+@app.post("/export/assembly/check-3d")
+def check_3d_assembly_endpoint(
+    internal_height_mm: float = 18.0,
+    pcb_clearance_mm: float = 0.6,
+    board: Optional[BoardState] = Body(default=None),
+) -> JSONResponse:
+    """Prueft 3D-Interferenzen zwischen Platine, Bauteilen und Gehaeuse-Deckel."""
+    target_board = _assembly_board(board)
+    enc = EnclosureParams(internal_height_mm=internal_height_mm, pcb_clearance_mm=pcb_clearance_mm)
+    return JSONResponse(content=check_3d_assembly_collisions(target_board, enclosure=enc))
 
 
 @app.post("/design/compile-hac")

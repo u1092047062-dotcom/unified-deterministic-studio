@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Unified Deterministic Studio — Frontier WebGPU &amp; Physics Inspector</title>
+  <style>
+    :root { --bg:#07101c; --card:#101c2e; --border:#233654; --accent:#38bdf8; --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --text:#e2e8f0; --muted:#94a3b8; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,sans-serif; background:var(--bg); color:var(--text); }
+    header { padding:16px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; border:1px solid var(--border); background:#0c1726; }
+    .pill.ok { border-color:var(--ok); color:#86efac; }
+    .pill.warn { border-color:var(--warn); color:#fde68a; }
+    main { max-width:1280px; margin:20px auto; padding:0 16px 40px; display:grid; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); gap:16px; }
+    section { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; }
+    h2 { margin:0 0 10px; font-size:16px; color:var(--accent); }
+    button { background:#1d4ed8; color:#fff; border:none; border-radius:8px; padding:8px 14px; cursor:pointer; font-weight:600; margin:4px 4px 8px 0; }
+    button:hover { background:#2563eb; }
+    pre { background:#060d18; border:1px solid #1e293b; border-radius:8px; padding:10px; font-size:12px; overflow:auto; max-height:260px; color:#cbd5e1; }
+    a { color:var(--accent); text-decoration:none; }
+    canvas { width:100%; height:140px; background:#060d18; border-radius:8px; border:1px solid #1e293b; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <strong>Frontier WebGPU &amp; Physics Inspector</strong>
+      <span style="color:var(--muted);font-size:13px;margin-left:8px;">Unified Deterministic Studio (Phasen 1–9)</span>
+    </div>
+    <div>
+      <span id="gpu-badge" class="pill warn">WebGPU: pruefe...</span>
+      <a class="pill" href="/">Cockpit</a>
+      <a class="pill" href="/simulator">100% Simulator</a>
+      <a class="pill" href="/.well-known/agent.json">A2A AgentCard</a>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>1. PCB Physik (IPC-2152 Thermik, S-Parameter) &amp; 3D-Check</h2>
+      <button onclick="runPhysics()">IPC-2152 &amp; S21/S11 pruefen</button>
+      <button onclick="run3D()">3D-Baugruppen-Kollision pruefen</button>
+      <button onclick="checkKiCad9()">KiCad 9 IPC Status</button>
+      <canvas id="s21-canvas" width="420" height="140"></canvas>
+      <pre id="eda-out">Klicke auf einen Button fuer Live-Physik- und 3D-Signoff...</pre>
+    </section>
+
+    <section>
+      <h2>2. Media ACEScg / SOTA-Router &amp; Ed25519 C2PA-Verifier</h2>
+      <button onclick="checkColorAndSota()">ACEScg + SOTA-Router testen</button>
+      <button onclick="checkTrustStatus()">Ed25519 / TPM Trust-Status</button>
+      <div style="margin:8px 0;">
+        <input type="file" id="c2pa-file" accept=".png" />
+        <button onclick="verifyPng()">PNG C2PA + Ed25519 pruefen</button>
+      </div>
+      <pre id="media-out">Lade ein C2PA-PNG hoch oder pruefe den 32-Bit-Linear-ACEScg-Status...</pre>
+    </section>
+
+    <section>
+      <h2>3. Durable Workflows (SQLite WAL) &amp; OTLP Traces</h2>
+      <button onclick="loadWorkflows()">Durable Workflows laden</button>
+      <button onclick="loadTraces()">W3C OTLP Spans laden</button>
+      <pre id="ops-out">Zeigt journalisierte Workflows und W3C-Traces...</pre>
+    </section>
+  </main>
+
+  <script>
+    (async () => {
+      const badge = document.getElementById('gpu-badge');
+      if (navigator.gpu) {
+        try {
+          const adapter = await navigator.gpu.requestAdapter();
+          if (adapter) { badge.textContent = 'WebGPU: AKTIV (Hardware-Adapter)'; badge.className = 'pill ok'; return; }
+        } catch (_) {}
+      }
+      badge.textContent = 'WebGPU: Fallback (Canvas2D/WebGL2)';
+      badge.className = 'pill warn';
+    })();
+
+    function drawSweep(sweep) {
+      const c = document.getElementById('s21-canvas');
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, c.width, c.height);
+      ctx.strokeStyle = '#1e293b'; ctx.strokeRect(28, 12, c.width - 40, c.height - 32);
+      if (!sweep || !sweep.length) return;
+      ctx.strokeStyle = '#38bdf8'; ctx.lineWidth = 2; ctx.beginPath();
+      sweep.forEach((pt, idx) => {
+        const x = 32 + (idx / Math.max(1, sweep.length - 1)) * (c.width - 48);
+        const y = 18 + Math.min(1, Math.abs(pt.s21_db) / 5.0) * (c.height - 44);
+        if (idx === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      ctx.fillStyle = '#94a3b8'; ctx.font = '11px monospace';
+      ctx.fillText('S21 Insertion Loss (0.1 -> 10 GHz)', 34, c.height - 6);
+    }
+
+    async function runPhysics() {
+      const r = await fetch('/eda/simulate/physics', { method: 'POST' });
+      const data = await r.json();
+      drawSweep(data.s_parameter_sweep);
+      document.getElementById('eda-out').textContent = JSON.stringify(data, null, 2);
+    }
+    async function run3D() {
+      const r = await fetch('/eda/export/assembly/check-3d', { method: 'POST' });
+      document.getElementById('eda-out').textContent = JSON.stringify(await r.json(), null, 2);
+    }
+    async function checkKiCad9() {
+      const r = await fetch('/eda/kicad9/ipc/status');
+      document.getElementById('eda-out').textContent = JSON.stringify(await r.json(), null, 2);
+    }
+    async function checkColorAndSota() {
+      const [c, s] = await Promise.all([
+        fetch('/art/color/status').then(r => r.json()),
+        fetch('/art/sota/route', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({quality_profile:'museum_fidelity', media_type:'photo', vram_gb:24}) }).then(r => r.json())
+      ]);
+      document.getElementById('media-out').textContent = JSON.stringify({color: c, sota_plan: s}, null, 2);
+    }
+    async function checkTrustStatus() {
+      const r = await fetch('/trust/status');
+      document.getElementById('media-out').textContent = JSON.stringify(await r.json(), null, 2);
+    }
+    async function verifyPng() {
+      const inp = document.getElementById('c2pa-file');
+      if (!inp.files.length) return;
+      const fd = new FormData(); fd.append('file', inp.files[0]);
+      const r = await fetch('/trust/verify', { method: 'POST', body: fd });
+      document.getElementById('media-out').textContent = JSON.stringify(await r.json(), null, 2);
+    }
+    async function loadWorkflows() {
+      const r = await fetch('/workflows');
+      document.getElementById('ops-out').textContent = JSON.stringify(await r.json(), null, 2);
+    }
+    async function loadTraces() {
+      const r = await fetch('/telemetry/traces');
+      document.getElementById('ops-out').textContent = JSON.stringify(await r.json(), null, 2);
+    }
+  </script>
+</body>
+</html>
