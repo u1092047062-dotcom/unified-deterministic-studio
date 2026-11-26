@@ -4,10 +4,10 @@ mod handlers;
 mod services;
 
 use handlers::telegram::{ALERTS_ENABLED, Command, handle_callback, handle_command};
+use services::log_rotation::RotatingLogWriter;
 use services::process_monitor::{AuditEvent, ProcessMonitor};
 use simplelog::{Config, LevelFilter, WriteLogger};
 use std::env;
-use std::fs::File;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use teloxide::prelude::*;
@@ -132,8 +132,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut log_path = env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
     log_path.pop();
-    let log_file =
-        File::create(log_path.join("bot_debug.log")).or_else(|_| File::create("bot_debug.log"));
+    const DEBUG_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
+    const DEBUG_LOG_BACKUPS: usize = 3;
+    let log_file = RotatingLogWriter::open(
+        log_path.join("bot_debug.log"),
+        DEBUG_LOG_MAX_BYTES,
+        DEBUG_LOG_BACKUPS,
+    )
+    .or_else(|_| RotatingLogWriter::open("bot_debug.log", DEBUG_LOG_MAX_BYTES, DEBUG_LOG_BACKUPS));
 
     match log_file {
         Ok(file) => {

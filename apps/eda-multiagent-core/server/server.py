@@ -18,7 +18,9 @@ from core.schema import BoardState, Component, Net, Pin, PinType, Via
 from core.pipeline_v2 import DesignPipeline
 from core.board_synthesizer import DesignSpec, build_template_board, list_templates, synthesize_board
 from core.kicad_export import export_kicad_pcb
-from core.gerber_export import detect_kicad_cli, export_gerber_with_manifest
+from core.gerber_export import detect_kicad_cli, export_gerber_bundle, export_gerber_with_manifest
+from core.gerber_verifier import verify_and_render_gerbers
+from core.part_library import DEFAULT_LIBRARY
 from core.manufacturing_export import generate_jlcpcb_bom, generate_jlcpcb_cpl
 from core.step_export import generate_step
 from core.enclosure_gen import generate_openscad_case
@@ -280,6 +282,22 @@ def export_gerber_endpoint(board: Optional[BoardState] = Body(default=None)) -> 
         details={"manifest_sha256": bundle["manifest"]["manifest_sha256"]},
     )
     return JSONResponse(content=bundle)
+
+
+@app.post("/export/gerber/verify")
+def verify_gerber_endpoint(board: Optional[BoardState] = Body(default=None)) -> JSONResponse:
+    """Exportiert und prueft RS-274X-Gerber + Excellon strukturell inkl. Composite-SVG."""
+    target_board = _assembly_board(board)
+    files = export_gerber_bundle(target_board)
+    report = verify_and_render_gerbers(files)
+    return JSONResponse(content=report)
+
+
+@app.get("/parts/search")
+def search_parts_endpoint(q: str = "", category: Optional[str] = None, limit: int = 25) -> JSONResponse:
+    """Durchsucht den lokalen LCSC/JLCPCB-SQLite-Katalog."""
+    parts = DEFAULT_LIBRARY.search_parts(q, category=category, limit=limit)
+    return JSONResponse(content={"count": len(parts), "parts": [p.model_dump() for p in parts]})
 
 
 @app.post("/jobs")

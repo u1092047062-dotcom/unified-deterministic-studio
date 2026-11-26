@@ -32,6 +32,22 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, WM_SYSCOMMAND,
 };
 
+pub struct DiskUsage {
+    pub drive: String,
+    pub free_gb: f64,
+    pub total_gb: f64,
+}
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GetDiskFreeSpaceExW(
+        lp_directory_name: *const u16,
+        lp_free_bytes_available_to_caller: *mut u64,
+        lp_total_number_of_bytes: *mut u64,
+        lp_total_number_of_free_bytes: *mut u64,
+    ) -> i32;
+}
+
 pub struct SystemTelemetry {
     pub cpu_usage: f32,
     pub ram_total_mb: u64,
@@ -39,6 +55,7 @@ pub struct SystemTelemetry {
     pub ram_percent: u32,
     pub battery_percent: Option<u8>,
     pub ac_online: bool,
+    pub disks: Vec<DiskUsage>,
 }
 
 pub struct Win32System;
@@ -153,7 +170,60 @@ impl Win32System {
             ram_percent,
             battery_percent,
             ac_online,
+            disks: Self::get_monitored_disks(),
         })
+    }
+
+    pub fn get_disk_usage(drive: &str) -> Option<DiskUsage> {
+        let wide: Vec<u16> = drive.encode_utf16().chain(Some(0)).collect();
+        let mut free_avail: u64 = 0;
+        let mut total_bytes: u64 = 0;
+        let mut total_free: u64 = 0;
+        let ok = unsafe {
+            GetDiskFreeSpaceExW(
+                wide.as_ptr(),
+                &mut free_avail,
+                &mut total_bytes,
+                &mut total_free,
+            )
+        };
+        if ok == 0 || total_bytes == 0 {
+            return None;
+        }
+        const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+        Some(DiskUsage {
+            drive: drive.trim_end_matches('\\').to_string(),
+            free_gb: free_avail as f64 / GIB,
+            total_gb: total_bytes as f64 / GIB,
+        })
+    }
+
+    pub fn get_monitored_disks() -> Vec<DiskUsage> {
+        ["C:\\", "D:\\"]
+            .iter()
+            .filter_map(|drive| Self::get_disk_usage(drive))
+            .collect()
+    }
+
+    pub fn format_disk_summary(disks: &[DiskUsage], low_gb_threshold: f64) -> String {
+        if disks.is_empty() {
+            return "n/a".to_string();
+        }
+        disks
+            .iter()
+            .map(|d| {
+                let warn = if d.free_gb < low_gb_threshold {
+                    " ⚠️"
+                } else {
+                    ""
+                };
+                format!(
+                    "{} {:.1}/{:.0} GB frei{}",
+                    d.drive, d.free_gb, d.total_gb, warn
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 
     fn read_system_times() -> Result<(u64, u64, u64), &'static str> {
@@ -485,5 +555,37 @@ impl Win32System {
 
             Ok(png_bytes)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disk_summary_flags_low_free_space_warning() {
+        let disks = vec![
+            DiskUsage {
+                drive: "C:".to_string(),
+                free_gb: 8.5,
+                total_gb: 222.0,
+            },
+            DiskUsage {
+                drive: "D:".to_string(),
+                free_gb: 160.0,
+                total_gb: 931.0,
+            },
+        ];
+        let summary = Win32System::format_disk_summary(&disks, 10.0);
+        assert!(summary.contains("C: 8.5/222 GB frei ⚠️"));
+        assert!(summary.contains("D: 160.0/931 GB frei"));
+        assert!(!summary.ends_with("⚠️"));
+    }
+
+    #[test]
+    fn system_c_drive_usage_is_readable() {
+        let c = Win32System::get_disk_usage("C:\\").expect("C:\\ muss unter Windows lesbar sein");
+        assert!(c.total_gb > 1.0);
+        assert!(c.free_gb <= c.total_gb);
     }
 }

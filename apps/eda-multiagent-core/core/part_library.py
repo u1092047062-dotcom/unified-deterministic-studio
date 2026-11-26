@@ -270,6 +270,57 @@ class PartLibrary:
     def list_categories(self) -> List[str]:
         return sorted({r[0] for r in self._db.execute("SELECT DISTINCT category FROM parts")})
 
+    def upsert_part(self, part: PartDefinition, value: Optional[str] = None) -> None:
+        """Fuegt ein Bauteil (z. B. aus jlcparts-Import) ein oder aktualisiert es."""
+        val_text = value or part.description or part.mpn
+        val_norm = normalize_value(val_text)
+        cat = _CATEGORY_ALIASES.get(part.category.strip().lower(), part.category.strip().lower())
+        self._db.execute(
+            "INSERT OR REPLACE INTO parts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                part.lcsc_id.strip().upper(),
+                part.mpn,
+                part.manufacturer,
+                cat,
+                part.footprint,
+                part.body_w,
+                part.body_h,
+                val_text,
+                val_norm,
+                part.datasheet_url,
+                part.description,
+                json.dumps(part.electrical),
+                json.dumps({k: v.model_dump() for k, v in part.pin_mapping.items()}),
+            ),
+        )
+        self._db.commit()
+
+    def search_parts(
+        self,
+        query: str = "",
+        *,
+        category: Optional[str] = None,
+        limit: int = 25,
+    ) -> List[PartDefinition]:
+        """Durchsucht den lokalen SQLite-Katalog nach LCSC-ID, MPN, Footprint oder Beschreibung."""
+        clauses: List[str] = []
+        params: List[object] = []
+        if category:
+            cat = _CATEGORY_ALIASES.get(category.strip().lower(), category.strip().lower())
+            clauses.append("category = ?")
+            params.append(cat)
+        if query.strip():
+            like = f"%{query.strip().lower()}%"
+            clauses.append(
+                "(LOWER(lcsc_id) LIKE ? OR LOWER(mpn) LIKE ? OR LOWER(footprint) LIKE ? OR LOWER(description) LIKE ?)"
+            )
+            params.extend([like, like, like, like])
+        where_sql = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = f"SELECT * FROM parts{where_sql} ORDER BY lcsc_id LIMIT ?"
+        params.append(max(1, min(int(limit), 200)))
+        rows = self._db.execute(sql, tuple(params)).fetchall()
+        return [self._row_to_part(r) for r in rows]
+
     def get(self, lcsc_id: str) -> PartDefinition:
         return self._row_to_part(self._fetch_by_lcsc(lcsc_id))
 

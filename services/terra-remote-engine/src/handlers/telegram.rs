@@ -246,12 +246,14 @@ pub async fn handle_command(
                         }
                     };
 
+                    let disk_info = Win32System::format_disk_summary(&data.disks, 10.0);
                     let response = format!(
-                        "🖥 **HARDWARE TELEMETRIE**\n                         ━━━━━━━━━━━━━━━━━━━\n                         ⚙️ **CPU:** {:.1}%\n                         🧠 **RAM:** {} MB / {} MB ({}%)\n                         🔌 **Strom:** {}\n                         ━━━━━━━━━━━━━━━━━━━",
+                        "🖥 **HARDWARE TELEMETRIE**\n                         ━━━━━━━━━━━━━━━━━━━\n                         ⚙️ **CPU:** {:.1}%\n                         🧠 **RAM:** {} MB / {} MB ({}%)\n                         💾 **Laufwerke:** {}\n                         🔌 **Strom:** {}\n                         ━━━━━━━━━━━━━━━━━━━",
                         data.cpu_usage,
                         data.ram_used_mb,
                         data.ram_total_mb,
                         data.ram_percent,
+                        disk_info,
                         battery_info
                     );
                     let _ = bot.send_message(msg.chat.id, response).await;
